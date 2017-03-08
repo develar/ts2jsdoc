@@ -1,4 +1,6 @@
 ## Installation
+
+[![Greenkeeper badge](https://badges.greenkeeper.io/develar/ts2jsdoc.svg)](https://greenkeeper.io/)
    
 This module requires Node.js 4.0 or higher to run.
 
