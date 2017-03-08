@@ -1,0 +1,14 @@
+{
+  "compilerOptions": {
+    "outDir": "out",
+    "target": "es2017",
+    "module": "es2015",
+    "noImplicitAny": true
+  },
+  "jsdoc": "out",
+  "files": [
+    "file.ts",
+    "namespace.d.ts",
+    "declared-module.d.ts"
+  ]
+}
