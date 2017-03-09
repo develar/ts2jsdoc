@@ -1,8 +1,9 @@
-import * as ts from "typescript";
-import * as path from "path";
-import {emptyDir, readJson, writeFile} from "fs-extra-p";
-import {JsDocRenderer} from "./JsDocRenderer";
-import {checkErrors} from "./util";
+import * as ts from "typescript"
+import * as path from "path"
+import { emptyDir, readJson, writeFile } from "fs-extra-p"
+import { JsDocRenderer } from "./JsDocRenderer"
+import { checkErrors, processTree } from "./util"
+import { Class, MethodDescriptor, Property, SourceFileDescriptor, Variable } from "./psi"
 
 export async function generateAndWrite(basePath: string, config: ts.ParsedCommandLine, tsConfig: any) {
   let packageData: any = {name: "packageJsonNotDefined"}
@@ -12,22 +13,33 @@ export async function generateAndWrite(basePath: string, config: ts.ParsedComman
   catch (e) {
   }
 
-  const generator = generate(basePath, config, tsConfig, packageData.name, packageData == null ? null : packageData.main)
+  const generator = generate(basePath, config, packageData.name, packageData == null ? null : packageData.main)
 
   const out = path.resolve(basePath, tsConfig.jsdoc)
   console.log(`Generating JSDoc to ${out}`)
   await emptyDir(out)
 
-  for (const [moduleId, contents] of generator.moduleNameToResult.entries()) {
+  for (const [moduleId, psi] of generator.moduleNameToResult.entries()) {
+    let result = ""
+    for (const d of psi.variables) {
+      result += generator.renderer.renderVariable(d)
+    }
+    for (const d of psi.classes) {
+      result += generator.renderer.renderClassOrInterface(d)
+    }
+    for (const d of psi.functions) {
+      result += generator.renderer.renderMethod(d)
+    }
+
     await writeFile(path.join(out, moduleId.replace(/\//g, "-") + ".js"), `/** 
  * @module ${moduleId}
  */
 
-${contents.join("\n\n")}`)
+${result}`)
   }
 }
 
-export function generate(basePath: string, config: ts.ParsedCommandLine, tsConfig: any, moduleName: string, main: string | null): JsDocGenerator {
+export function generate(basePath: string, config: ts.ParsedCommandLine, moduleName: string, main: string | null): JsDocGenerator {
   const compilerOptions = config.options
   const compilerHost = ts.createCompilerHost(compilerOptions)
   const program = ts.createProgram(config.fileNames, compilerOptions, compilerHost)
@@ -39,11 +51,11 @@ export function generate(basePath: string, config: ts.ParsedCommandLine, tsConfi
   }
 
   const generator = new JsDocGenerator(program, path.relative(basePath, compilerOptions.outDir), moduleName, main, (<any>program).getCommonSourceDirectory())
-  generateJsDoc(generator, path.resolve(basePath, tsConfig.jsdoc))
+  generateJsDoc(generator)
   return generator
 }
 
-function generateJsDoc(generator: JsDocGenerator, out: string): void {
+function generateJsDoc(generator: JsDocGenerator): void {
   for (const sourceFile of generator.program.getSourceFiles()) {
     if (!sourceFile.isDeclarationFile) {
       generator.generate(sourceFile)
@@ -53,12 +65,10 @@ function generateJsDoc(generator: JsDocGenerator, out: string): void {
 
 export class JsDocGenerator {
   private readonly fileNameToModuleId: any = {}
-  readonly moduleNameToResult = new Map<string, Array<string>>()
-
+  readonly moduleNameToResult = new Map<string, SourceFileDescriptor>()
 
   private currentSourceModuleId: string
-  private currentSourceFile: ts.SourceFile
-  private readonly renderer = new JsDocRenderer(this)
+  readonly renderer = new JsDocRenderer(this)
 
   constructor(readonly program: ts.Program, readonly relativeOutDir: string, private readonly moduleName: string, private readonly mainFile: string, private readonly commonSourceDirectory: string) {
   }
@@ -93,25 +103,31 @@ export class JsDocGenerator {
     return {sourceModuleId, fileNameWithoutExt}
   }
 
-  generate(sourceFile: ts.SourceFile) {
+  generate(sourceFile: ts.SourceFile): void {
     if (sourceFile.text.length === 0) {
       return
     }
-
-    this.currentSourceFile = sourceFile
-    this.renderer.currentSourceFile = sourceFile
 
     const {sourceModuleId, fileNameWithoutExt} = this.sourceFileToModuleId(sourceFile)
     this.currentSourceModuleId = sourceModuleId
     this.fileNameToModuleId[path.resolve(fileNameWithoutExt).replace(/\\/g, "/")] = sourceModuleId
 
-    const content = processTree(sourceFile, (node) => {
+    const classes: Array<Class> = []
+    const functions: Array<MethodDescriptor> = []
+    const variables: Array<Variable> = []
+
+    processTree(sourceFile, (node) => {
       if (node.kind === ts.SyntaxKind.InterfaceDeclaration || node.kind === ts.SyntaxKind.ClassDeclaration) {
-        return this.renderClassOrInterface(node)
+        const descriptor = this.renderClassOrInterface(node)
+        if (descriptor != null) {
+          classes.push(descriptor)
+        }
       }
       else if (node.kind === ts.SyntaxKind.FunctionDeclaration) {
-        this.renderer.indent = ""
-        return this.renderFunction(<ts.FunctionDeclaration>node)
+        const descriptor = this.describeFunction(<ts.FunctionDeclaration>node)
+        if (descriptor != null) {
+          functions.push(descriptor)
+        }
       }
       else if (node.kind === ts.SyntaxKind.ExportKeyword) {
         return ""
@@ -120,56 +136,73 @@ export class JsDocGenerator {
         return null
       }
       else if (node.kind === ts.SyntaxKind.VariableStatement) {
-        return this.renderVariableStatement(<ts.VariableStatement>node)
+        const descriptor = this.describeVariable(<ts.VariableStatement>node)
+        if (descriptor != null) {
+          variables.push(descriptor)
+        }
       }
       return ""
     })
 
-    let contents = this.moduleNameToResult.get(sourceModuleId)
-    if (contents == null) {
-      contents = []
-      this.moduleNameToResult.set(sourceModuleId, contents)
+    const existingPsi = this.moduleNameToResult.get(sourceModuleId)
+    if (existingPsi == null) {
+      this.moduleNameToResult.set(sourceModuleId, {classes, functions, variables})
     }
-    contents.push(content)
+    else {
+      existingPsi.classes.push(...classes)
+      existingPsi.functions.push(...functions)
+      existingPsi.variables.push(...variables)
+    }
   }
 
-  getTypeNamePathByNode(node: ts.Node): string | null {
+  getTypeNamePathByNode(node: ts.Node): Array<string> | null {
     if (node.kind === ts.SyntaxKind.UnionType) {
-      const typeNames: Array<string> = []
-      for (const type of (<ts.UnionType>(<any>node)).types) {
-        const name = this.getTypeNamePathByNode(<any>type)
-        if (name == null) {
-          throw new Error("cannot get name for " + node.getText(node.getSourceFile()))
-        }
-        typeNames.push(name)
-      }
-      return typeNames.join(" | ")
+      return this.typesToList((<ts.UnionType>(<any>node)).types, node)
     }
     else if (node.kind === ts.SyntaxKind.FunctionType) {
-      return "callback"
+      return ["callback"]
     }
     else if (node.kind === ts.SyntaxKind.NumberKeyword) {
-      return "number"
+      return ["number"]
     }
     else if (node.kind === ts.SyntaxKind.StringKeyword) {
-      return "string"
+      return ["string"]
     }
     else if (node.kind === ts.SyntaxKind.BooleanKeyword) {
-      return "boolean"
+      return ["boolean"]
     }
     else if (node.kind === ts.SyntaxKind.NullKeyword) {
-      return "null"
+      return ["null"]
     }
     else if (node.kind === ts.SyntaxKind.UndefinedKeyword) {
-      return "undefined"
+      return ["undefined"]
     }
     else if (node.kind === ts.SyntaxKind.LiteralType) {
       const text = (<ts.LiteralLikeNode>(<any>(<ts.LiteralTypeNode>node).literal)).text
-      return `"${text}"`
+      return [`"${text}"`]
     }
 
     const type = this.program.getTypeChecker().getTypeAtLocation(node)
-    return type == null ? null : this.getTypeNamePath(type)
+    if (type == null) {
+      return null
+    }
+
+    if (type.flags & ts.TypeFlags.UnionOrIntersection) {
+      return this.typesToList((<ts.UnionOrIntersectionType>type).types, node)
+    }
+    return [this.getTypeNamePath(type)]
+  }
+
+  private typesToList(types: Array<ts.Type>, node: ts.Node) {
+    const typeNames: Array<string> = []
+    for (const type of types) {
+      const name = (<any>type).kind == null ? [this.getTypeNamePath(<any>type)] : this.getTypeNamePathByNode(<any>type)
+      if (name == null) {
+        throw new Error("cannot get name for " + node.getText(node.getSourceFile()))
+      }
+      typeNames.push(...name)
+    }
+    return typeNames
   }
 
   getTypeNamePath(type: ts.Type): string | null {
@@ -190,6 +223,9 @@ export class JsDocGenerator {
     }
     if (type.flags & ts.TypeFlags.Undefined) {
       return "undefined"
+    }
+    if (type.flags & ts.TypeFlags.Literal) {
+      return (<ts.LiteralType>type).text
     }
 
     const symbol = type.symbol
@@ -227,25 +263,21 @@ export class JsDocGenerator {
     return null
   }
 
-  // transform:
-  // export const autoUpdater: AppUpdater = impl
-  private renderVariableStatement(node: ts.VariableStatement): string {
+  private describeVariable(node: ts.VariableStatement): Variable {
     const flags = ts.getCombinedModifierFlags(node)
     if (!(flags & ts.ModifierFlags.Export)) {
-      return ""
+      return null
     }
 
     const declarations = node.declarationList == null ? null : node.declarationList.declarations
     if (declarations == null && declarations.length !== 1) {
-      return ""
+      return null
     }
 
     const declaration = <ts.VariableDeclaration>declarations[0]
     if (declaration.type == null) {
-      return ""
+      return null
     }
-
-    this.renderer.indent = ""
 
     let typeName
     const type = this.program.getTypeChecker().getTypeAtLocation(declaration)
@@ -256,63 +288,43 @@ export class JsDocGenerator {
       typeName = (<ts.Identifier>(<ts.TypeReferenceNode>declaration.type).typeName).text
     }
 
-    const tags = [`@type ${typeName}`]
-
     // NodeFlags.Const on VariableDeclarationList, not on VariableDeclaration
-    if (node.declarationList.flags & ts.NodeFlags.Const) {
-      tags.push("@constant")
-    }
-
-    let result = this.renderer.formatComment(declaration, tags)
-    // jsdoc cannot parse const, so, we always use var
-    result += `${this.renderer.indent}export var ${(<ts.Identifier>declaration.name).text}\n`
-    return result
+    return {typeName, node, name: (<ts.Identifier>declaration.name).text, isConst: (node.declarationList.flags & ts.NodeFlags.Const) > 0}
   }
 
-  private renderFunction(node: ts.FunctionDeclaration): string {
+  //noinspection JSMethodCanBeStatic
+  private describeFunction(node: ts.FunctionDeclaration): MethodDescriptor | null {
     const flags = ts.getCombinedModifierFlags(node)
     if (!(flags & ts.ModifierFlags.Export)) {
-      return ""
+      return null
     }
-
-    const name = (<ts.Identifier>node.name).text
-    // return `export function ${name}() {}`
-    return this.renderer.renderMethod({name: name, node: node, tags: []})
+    return {name: (<ts.Identifier>node.name).text, node: node, tags: []}
   }
 
-  private renderClassOrInterface(node: ts.Node): string {
-    this.renderer.indent = ""
-
+  private renderClassOrInterface(node: ts.Node): Class | null {
     const flags = ts.getCombinedModifierFlags(node)
     if (!(flags & ts.ModifierFlags.Export)) {
-      return ""
+      return null
     }
 
     const nodeDeclaration = <ts.InterfaceDeclaration>node
     const className = (<ts.Identifier>nodeDeclaration.name).text
 
-    let result = "/** \n"
-    result += this.renderer.description(node)
-
-    if (node.kind === ts.SyntaxKind.InterfaceDeclaration) {
-      result += ` * @interface ${this.computeTypePath()}.${className}\n`
-    }
-
     const clazz = <ts.ClassDeclaration>node
+    let parents: Array<string> = []
     if (clazz.heritageClauses != null) {
       for (const heritageClause of clazz.heritageClauses) {
         if (heritageClause.types != null) {
           for (const type of heritageClause.types) {
             const typeNamePath = this.getTypeNamePathByNode(type)
             if (typeNamePath != null) {
-              result += ` * @extends ${typeNamePath}\n`
+              parents = typeNamePath
             }
           }
         }
       }
     }
 
-    this.renderer.indent = "  "
     const methods: Array<MethodDescriptor> = []
     const properties: Array<Property> = []
     for (const member of nodeDeclaration.members) {
@@ -330,11 +342,6 @@ export class JsDocGenerator {
       }
     }
 
-    result += this.renderer.renderProperties(properties)
-
-    result += " */\n"
-    result += `export class ${className} {\n`
-
     methods.sort((a, b) => {
       let weightA = a.isProtected ? 100 : 0
       let weightB = b.isProtected ? 100 : 0
@@ -344,25 +351,22 @@ export class JsDocGenerator {
       return weightA - weightB
     })
 
-    for (const method of methods) {
-      result += this.renderer.renderMethod(method)
-      if (method !== methods[methods.length - 1]) {
-        result += "\n"
-      }
+    return {
+      modulePath: this.computeTypePath(),
+      name: className,
+      node, methods, properties, parents,
+      isInterface: node.kind === ts.SyntaxKind.InterfaceDeclaration
     }
-
-    result += "}\n\n"
-    return result
   }
 
-  private describeProperty(node: ts.SignatureDeclaration): Property | null {
+  private describeProperty(node: ts.PropertySignature): Property | null {
     const flags = ts.getCombinedModifierFlags(node)
     if (flags & ts.ModifierFlags.Private) {
       return null
     }
 
     const name = (<ts.Identifier>node.name).text
-    return {name, types: this.getTypeNamePathByNode(node.type), node}
+    return {name, types: this.getTypeNamePathByNode(node.type), node, isOptional: node.questionToken != null}
   }
 
   private renderMethod(node: ts.SignatureDeclaration, className: string): MethodDescriptor | null {
@@ -389,69 +393,6 @@ export class JsDocGenerator {
   private computeTypePath(): string {
     return "module:" + this.currentSourceModuleId
   }
-}
-
-export function processTree(sourceFile: ts.SourceFile, replacer: (node: ts.Node) => string): string {
-  let code = '';
-  let cursorPosition = 0;
-
-  function skip(node: ts.Node) {
-    cursorPosition = node.end;
-  }
-
-  function readThrough(node: ts.Node) {
-    code += sourceFile.text.slice(cursorPosition, node.pos);
-    cursorPosition = node.pos;
-  }
-
-  function visit(node: ts.Node) {
-    readThrough(node);
-
-    if (node.flags & ts.ModifierFlags.Private) {
-      // skip private nodes
-      skip(node)
-      return
-    }
-
-    if (node.kind === ts.SyntaxKind.ImportDeclaration && (<ts.ImportDeclaration>node).importClause == null) {
-      // ignore side effects only imports (like import "source-map-support/register")
-      skip(node)
-      return
-    }
-
-    const replacement = replacer(node)
-    if (replacement != null) {
-      code += replacement
-      skip(node)
-    }
-    else {
-      if (node.kind === ts.SyntaxKind.ClassDeclaration || node.kind === ts.SyntaxKind.InterfaceDeclaration || node.kind === ts.SyntaxKind.FunctionDeclaration) {
-        code += "\n"
-      }
-      ts.forEachChild(node, visit)
-    }
-  }
-
-  visit(sourceFile)
-  code += sourceFile.text.slice(cursorPosition)
-
-  return code
-}
-
-export interface MethodDescriptor {
-  name: string
-  tags: Array<string>
-
-  isProtected?: boolean
-
-  node: ts.SignatureDeclaration
-}
-
-export interface Property {
-  name: string
-  types: string
-
-  node: ts.SignatureDeclaration
 }
 
 function trimMutatorPrefix(name: string) {

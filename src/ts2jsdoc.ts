@@ -1,9 +1,10 @@
 #! /usr/bin/env node
 
-import * as ts from "typescript";
+import * as ts from "typescript"
 
-import {generateAndWrite} from "./JsDocGenerator";
-import {transpile} from "./util";
+import { generateAndWrite } from "./JsDocGenerator"
+import { transpile } from "./util"
+import "source-map-support/register"
 
 transpile((basePath: string, config: ts.ParsedCommandLine, tsConfig: any) => generateAndWrite(basePath, config, tsConfig))
   .catch(error => {
