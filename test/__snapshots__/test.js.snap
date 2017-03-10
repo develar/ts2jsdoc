@@ -1,24 +1,52 @@
 // Jest Snapshot v1, https://goo.gl/fbAQLP
 
 exports[`interface from namespace 1`] = `
-Map {
-  "test/out/file" => Array [
-    "/**
+"/** 
+     * @module test/out/file
+     */
+    
+    /**
+ * Can be specified in the [config](https://github.com/electron-userland/electron-builder/wiki/Options#configuration-options) or any platform- or target- specific options.
+
+If \`GH_TOKEN\` is set — defaults to \`[{provider: \\"github\\"}]\`.
+
+If \`BT_TOKEN\` is set and \`GH_TOKEN\` is not set — defaults to \`[{provider: \\"bintray\\"}]\`.
+ * @interface module:test/out/file.PublishConfiguration
+ * @property {\\"github\\" | \\"bintray\\" | \\"s3\\" | \\"generic\\"} provider The provider.
+ * @property {string | null} [owner] The owner.
+ * @property {string | null} [token]
+ */
+export class PublishConfiguration {
+}
+
+/**
+ * Amazon S3 options. \`https\` must be used, so, if you use direct Amazon S3 endpoints, format \`https://s3.amazonaws.com/bucket_name\` [must be used](http://stackoverflow.com/a/11203685/1910191). And do not forget to make files/directories public.
+ * @interface module:test/out/file.S3Options
+ * @extends module:test/out/file.PublishConfiguration
+ * @property {string} bucket The bucket name.
+ * @property {string | null} [path=/] The directory path.
+ * @property {string | null} [channel=latest] The channel.
+ * @property {\\"private\\" | \\"public-read\\" | null} [acl=public-read] The ACL.
+ * @property {\\"STANDARD\\" | \\"REDUCED_REDUNDANCY\\" | \\"STANDARD_IA\\" | null} [storageClass=STANDARD] The type of storage to use for the object.
+ * @see [Getting your credentials](http://docs.aws.amazon.com/sdk-for-javascript/v2/developer-guide/getting-your-credentials.html).
+ */
+export class S3Options {
+}
+
+/**
  * @param {Electron:RequestOptions} options
  * @param {Error} error
  * @param {module:publish-api.VersionInfo} info
  * @param {\\"foo\\" | \\"bar\\"} name
  */
-function foo() {}
+export function foo() {}
 /**
  * @returns {boolean}
  */
-function bool() {}
+export function bool() {}
 /**
  * @returns {number}
  */
-function num() {}
-",
-  ],
-}
+export function num() {}
+"
 `;

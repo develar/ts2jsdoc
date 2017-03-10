@@ -1,7 +1,7 @@
 {
   "name": "ts-jsdoc",
   "description": "Transform TypeScript to JSDoc annotated JS code",
-  "version": "1.0.1",
+  "version": "1.0.3",
   "license": "MIT",
   "bin": {
     "ts2jsdoc": "out/ts2jsdoc.js"
@@ -55,6 +55,7 @@
     "roots": [
       "test"
     ],
+    "transformIgnorePatterns": ["<rootDir>"],
     "testPathIgnorePatterns": [
       "[\\/]{1}fixtures[\\/]{1}"
     ],

@@ -3,7 +3,7 @@ import * as path from "path"
 import { emptyDir, readJson, writeFile } from "fs-extra-p"
 import { JsDocRenderer } from "./JsDocRenderer"
 import { checkErrors, processTree } from "./util"
-import { Class, MethodDescriptor, Property, SourceFileDescriptor, Variable } from "./psi"
+import { Class, Member, MethodDescriptor, Property, SourceFileDescriptor, SourceFileModuleInfo, Variable } from "./psi"
 
 export async function generateAndWrite(basePath: string, config: ts.ParsedCommandLine, tsConfig: any) {
   let packageData: any = {name: "packageJsonNotDefined"}
@@ -19,16 +19,39 @@ export async function generateAndWrite(basePath: string, config: ts.ParsedComman
   console.log(`Generating JSDoc to ${out}`)
   await emptyDir(out)
 
-  for (const [moduleId, psi] of generator.moduleNameToResult.entries()) {
+  const moduleNameToResult = generator.moduleNameToResult
+  const mainPsi = generator.moduleNameToResult.get(generator.moduleName)
+  
+  const oldModulePathToNew = new Map<string, string>()
+  for (const [id, names] of generator.mainMappings) {
+    const psi = moduleNameToResult.get(id)
+    for (const name of names) {
+      if (moveMember(psi.classes, mainPsi.classes, name, generator.moduleName)) {
+        oldModulePathToNew.set(`module:${id}.${name}`, `module:${generator.moduleName}.${name}`)
+        
+        continue
+      }
+      
+      moveMember(psi.functions, mainPsi.functions, name) || moveMember(psi.variables, mainPsi.variables, name)
+    }
+  }
+  
+  for (const [moduleId, psi] of moduleNameToResult.entries()) {
     let result = ""
-    for (const d of psi.variables) {
+    for (const d of copyAndSort(psi.variables)) {
       result += generator.renderer.renderVariable(d)
     }
-    for (const d of psi.classes) {
-      result += generator.renderer.renderClassOrInterface(d)
+    
+    for (const d of copyAndSort(psi.classes)) {
+      result += generator.renderer.renderClassOrInterface(d, oldModulePathToNew)
     }
-    for (const d of psi.functions) {
-      result += generator.renderer.renderMethod(d)
+    
+    for (const d of copyAndSort(psi.functions)) {
+      result += generator.renderer.renderMethod(d, oldModulePathToNew)
+    }
+    
+    if (result === "") {
+      continue
     }
 
     await writeFile(path.join(out, moduleId.replace(/\//g, "-") + ".js"), `/** 
@@ -37,6 +60,26 @@ export async function generateAndWrite(basePath: string, config: ts.ParsedComman
 
 ${result}`)
   }
+}
+
+function moveMember<T extends Member>(members: Array<T>, mainPsiMembers: Array<T>, name: string, newId: string | null = null): boolean {
+  const index = members.findIndex(it => it.name === name)
+  if (index < 0) {
+    return false
+  }
+  
+  const member = members[index]
+  if (newId != null) {
+    (<any>member).modulePath = "module:" + newId
+  }
+
+  mainPsiMembers.push(member)
+  members.splice(index, 1)
+  return true
+}
+
+function copyAndSort<T extends Member>(members: Array<T>): Array<T> {
+  return members.slice().sort((a, b) => a.name.localeCompare(b.name))
 }
 
 export function generate(basePath: string, config: ts.ParsedCommandLine, moduleName: string, main: string | null): JsDocGenerator {
@@ -51,16 +94,12 @@ export function generate(basePath: string, config: ts.ParsedCommandLine, moduleN
   }
 
   const generator = new JsDocGenerator(program, path.relative(basePath, compilerOptions.outDir), moduleName, main, (<any>program).getCommonSourceDirectory())
-  generateJsDoc(generator)
-  return generator
-}
-
-function generateJsDoc(generator: JsDocGenerator): void {
-  for (const sourceFile of generator.program.getSourceFiles()) {
+  for (const sourceFile of program.getSourceFiles()) {
     if (!sourceFile.isDeclarationFile) {
       generator.generate(sourceFile)
     }
   }
+  return generator
 }
 
 export class JsDocGenerator {
@@ -69,14 +108,16 @@ export class JsDocGenerator {
 
   private currentSourceModuleId: string
   readonly renderer = new JsDocRenderer(this)
+  
+  readonly mainMappings = new Map<string, Array<string>>() 
 
-  constructor(readonly program: ts.Program, readonly relativeOutDir: string, private readonly moduleName: string, private readonly mainFile: string, private readonly commonSourceDirectory: string) {
+  constructor(readonly program: ts.Program, readonly relativeOutDir: string, readonly moduleName: string, private readonly mainFile: string, private readonly commonSourceDirectory: string) {
   }
 
-  private sourceFileToModuleId(sourceFile: ts.SourceFile) {
+  private sourceFileToModuleId(sourceFile: ts.SourceFile): SourceFileModuleInfo {
     if (sourceFile.isDeclarationFile) {
       if (sourceFile.fileName.endsWith("node.d.ts")) {
-        return {sourceModuleId: "node", fileNameWithoutExt: ""}
+        return {id: "node", fileNameWithoutExt: "", isMain: false}
       }
     }
 
@@ -86,7 +127,7 @@ export class JsDocGenerator {
     if (this.moduleName != null) {
       sourceModuleId = this.moduleName
       if (name !== "index") {
-        sourceModuleId += '/' + this.relativeOutDir
+        sourceModuleId += "/" + this.relativeOutDir
       }
     }
     else {
@@ -94,13 +135,14 @@ export class JsDocGenerator {
     }
 
     if (name !== "index") {
-      sourceModuleId += '/' + name
+      sourceModuleId += "/" + name
     }
 
-    if (this.mainFile == null ? fileNameWithoutExt.endsWith("/main") : `${fileNameWithoutExt}.js`.includes(path.posix.relative(this.relativeOutDir, this.mainFile))) {
+    const isMain = this.mainFile == null ? fileNameWithoutExt.endsWith("/main") : `${fileNameWithoutExt}.js`.includes(path.posix.relative(this.relativeOutDir, this.mainFile))
+    if (isMain) {
       sourceModuleId = this.moduleName
     }
-    return {sourceModuleId, fileNameWithoutExt}
+    return {id: sourceModuleId, fileNameWithoutExt, isMain}
   }
 
   generate(sourceFile: ts.SourceFile): void {
@@ -108,9 +150,9 @@ export class JsDocGenerator {
       return
     }
 
-    const {sourceModuleId, fileNameWithoutExt} = this.sourceFileToModuleId(sourceFile)
-    this.currentSourceModuleId = sourceModuleId
-    this.fileNameToModuleId[path.resolve(fileNameWithoutExt).replace(/\\/g, "/")] = sourceModuleId
+    const moduleId = this.sourceFileToModuleId(sourceFile)
+    this.currentSourceModuleId = moduleId.id
+    this.fileNameToModuleId[path.resolve(moduleId.fileNameWithoutExt).replace(/\\/g, "/")] = moduleId.id
 
     const classes: Array<Class> = []
     const functions: Array<MethodDescriptor> = []
@@ -129,11 +171,12 @@ export class JsDocGenerator {
           functions.push(descriptor)
         }
       }
-      else if (node.kind === ts.SyntaxKind.ExportKeyword) {
-        return ""
+      else if (moduleId.isMain && node.kind === ts.SyntaxKind.ExportDeclaration) {
+        this.handleExportFromMain(<ts.ExportDeclaration>node)
+        return true
       }
       else if (node.kind === ts.SyntaxKind.SourceFile) {
-        return null
+        return false
       }
       else if (node.kind === ts.SyntaxKind.VariableStatement) {
         const descriptor = this.describeVariable(<ts.VariableStatement>node)
@@ -141,18 +184,53 @@ export class JsDocGenerator {
           variables.push(descriptor)
         }
       }
-      return ""
+      return true
     })
 
-    const existingPsi = this.moduleNameToResult.get(sourceModuleId)
+    const existingPsi = this.moduleNameToResult.get(moduleId.id)
     if (existingPsi == null) {
-      this.moduleNameToResult.set(sourceModuleId, {classes, functions, variables})
+      this.moduleNameToResult.set(moduleId.id, {classes, functions, variables})
     }
     else {
       existingPsi.classes.push(...classes)
       existingPsi.functions.push(...functions)
       existingPsi.variables.push(...variables)
     }
+  }
+  
+  private handleExportFromMain(node: ts.ExportDeclaration) {
+    const moduleSpecifier = node.moduleSpecifier
+    const exportClause = node.exportClause
+    if (exportClause == null || moduleSpecifier == null) {
+      return
+    }
+    
+    if (moduleSpecifier.kind !== ts.SyntaxKind.StringLiteral) {
+      return
+    }
+    
+    const filePath = (<ts.StringLiteral>moduleSpecifier).text
+    if (!filePath.startsWith(".")) {
+      return
+    }
+    
+    const fullFilename = path.posix.resolve(path.posix.dirname(node.getSourceFile().fileName), filePath) + ".ts"
+    const sourceFile = this.program.getSourceFile(fullFilename)
+    if (sourceFile == null) {
+      return
+    }
+    
+    const names: Array<string> = []
+    for (const e of exportClause.elements) {
+      if (e.kind === ts.SyntaxKind.ExportSpecifier) {
+        names.push((<ts.Identifier>(<ts.ExportSpecifier>e).name).text) 
+      }
+      else {
+        console.error(`Unsupported export element: ${e.getText(e.getSourceFile())}`)
+      }
+    }
+    
+    this.mainMappings.set(this.sourceFileToModuleId(sourceFile).id, names)
   }
 
   getTypeNamePathByNode(node: ts.Node): Array<string> | null {
@@ -190,7 +268,12 @@ export class JsDocGenerator {
     if (type.flags & ts.TypeFlags.UnionOrIntersection) {
       return this.typesToList((<ts.UnionOrIntersectionType>type).types, node)
     }
-    return [this.getTypeNamePath(type)]
+    
+    let result = this.getTypeNamePath(type)
+    if (result == null) {
+      throw new Error("Cannot infer getTypeNamePath")
+    }
+    return [result]
   }
 
   private typesToList(types: Array<ts.Type>, node: ts.Node) {
@@ -224,8 +307,11 @@ export class JsDocGenerator {
     if (type.flags & ts.TypeFlags.Undefined) {
       return "undefined"
     }
+    if (type.flags & ts.TypeFlags.Any) {
+      return "any"
+    }
     if (type.flags & ts.TypeFlags.Literal) {
-      return (<ts.LiteralType>type).text
+      return `"${(<ts.LiteralType>type).text}"`
     }
 
     const symbol = type.symbol
@@ -252,7 +338,7 @@ export class JsDocGenerator {
         }
       }
       else if (typeSourceParent.kind === ts.SyntaxKind.SourceFile) {
-        const sourceModuleId = this.sourceFileToModuleId(<ts.SourceFile>typeSourceParent).sourceModuleId
+        const sourceModuleId = this.sourceFileToModuleId(<ts.SourceFile>typeSourceParent).id
         return `module:${sourceModuleId}.${symbol.name}`
       }
 
@@ -279,17 +365,17 @@ export class JsDocGenerator {
       return null
     }
 
-    let typeName
+    let types
     const type = this.program.getTypeChecker().getTypeAtLocation(declaration)
     if (type.symbol != null && type.symbol.valueDeclaration != null) {
-      typeName = this.getTypeNamePath(type)
+      types = [this.getTypeNamePath(type)]
     }
     else {
-      typeName = (<ts.Identifier>(<ts.TypeReferenceNode>declaration.type).typeName).text
+      types = this.getTypeNamePathByNode(declaration.type)
     }
 
     // NodeFlags.Const on VariableDeclarationList, not on VariableDeclaration
-    return {typeName, node, name: (<ts.Identifier>declaration.name).text, isConst: (node.declarationList.flags & ts.NodeFlags.Const) > 0}
+    return {types, node, name: (<ts.Identifier>declaration.name).text, isConst: (node.declarationList.flags & ts.NodeFlags.Const) > 0}
   }
 
   //noinspection JSMethodCanBeStatic

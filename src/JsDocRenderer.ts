@@ -43,7 +43,7 @@ export class JsDocRenderer {
     return result
   }
 
-  renderClassOrInterface(descriptor: Class): string {
+  renderClassOrInterface(descriptor: Class, oldModulePathToNew: Map<string, string>): string {
     this.indent = ""
 
     const tags: Array<string> = []
@@ -53,16 +53,16 @@ export class JsDocRenderer {
     }
 
     for (const parent of descriptor.parents) {
-      tags.push(`@extends ${parent}`)
+      tags.push(`@extends ${oldModulePathToNew.get(parent) || parent}`)
     }
 
-    JsDocRenderer.renderProperties(descriptor.properties, tags)
+    JsDocRenderer.renderProperties(descriptor.properties, tags, oldModulePathToNew)
 
     let result = this.formatComment(descriptor.node, tags, parseExistingJsDoc(descriptor.node, tags) || "")
     result += `export class ${descriptor.name} {\n`
 
     for (const method of descriptor.methods) {
-      result += this.renderMethod(method)
+      result += this.renderMethod(method, oldModulePathToNew)
       if (method !== descriptor.methods[descriptor.methods.length - 1]) {
         result += "\n"
       }
@@ -72,7 +72,7 @@ export class JsDocRenderer {
     return result
   }
 
-  renderMethod(method: MethodDescriptor): string {
+  renderMethod(method: MethodDescriptor, oldModulePathToNew: Map<string, string>): string {
     const tags = method.tags.slice()
 
     const paramNameToInfo = new Map<string, Tag>()
@@ -102,7 +102,7 @@ export class JsDocRenderer {
 
       const type = param.type
       if (type != null) {
-        text += ` ${renderTypes(this.generator.getTypeNamePathByNode(type))}`
+        text += ` ${renderTypes(this.generator.getTypeNamePathByNode(type), oldModulePathToNew)}`
       }
 
       const tag = paramNameToInfo.get(name)
@@ -127,7 +127,7 @@ export class JsDocRenderer {
     let result = this.formatComment(method.node, tags, (parsed == null ? "" : parsed.description) || "")
     result += `${this.indent}`
     if (method.node.kind === ts.SyntaxKind.FunctionDeclaration) {
-      result += "function "
+      result += "export function "
     }
     result += `${method.name}() {}\n`
     return result
@@ -150,7 +150,7 @@ export class JsDocRenderer {
   renderVariable(descriptor: Variable): string {
     this.indent = ""
 
-    const tags = [`@type ${descriptor.typeName}`]
+    const tags = [`@type ${renderTypes(descriptor.types)}`]
 
     if (descriptor.isConst) {
       tags.push("@constant")
@@ -164,7 +164,7 @@ export class JsDocRenderer {
 
   // form http://stackoverflow.com/questions/10490713/how-to-document-the-properties-of-the-object-in-the-jsdoc-3-tag-this
   // doesn't produce properties table, so, we use property tags
-  private static renderProperties(properties: Array<Property>, tags: Array<string>): void {
+  private static renderProperties(properties: Array<Property>, tags: Array<string>, oldModulePathToNew: Map<string, string>): void {
     for (const descriptor of properties) {
       const existingJsDoc = JsDocRenderer.getComment(descriptor.node)
       const parsed = existingJsDoc == null ? null : parseJsDoc(existingJsDoc, {unwrap: true})
@@ -180,7 +180,7 @@ export class JsDocRenderer {
         }
       }
 
-      let result = `@property ${renderTypes(descriptor.types)} `
+      let result = `@property ${renderTypes(descriptor.types, oldModulePathToNew)} `
 
       if (descriptor.isOptional) {
         result += "["
@@ -216,6 +216,9 @@ function parseExistingJsDoc(node: ts.Node, tags: Array<string>): string | null {
   return parsed == null ? null : parsed.description
 }
 
-function renderTypes(names: Array<string>) {
+function renderTypes(names: Array<string>, oldModulePathToNew?: Map<string, string>) {
+  if (oldModulePathToNew != null) {
+    names = names.map(it => oldModulePathToNew.get(it) || it)
+  }
   return `{${names.join(" | ")}}`
 }

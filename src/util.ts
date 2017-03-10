@@ -61,8 +61,7 @@ class CompilationError extends Error {
   }
 }
 
-export function processTree(sourceFile: ts.SourceFile, replacer: (node: ts.Node) => string): string {
-  let code = '';
+export function processTree(sourceFile: ts.SourceFile, replacer: (node: ts.Node) => boolean): void {
   let cursorPosition = 0;
 
   function skip(node: ts.Node) {
@@ -70,40 +69,25 @@ export function processTree(sourceFile: ts.SourceFile, replacer: (node: ts.Node)
   }
 
   function readThrough(node: ts.Node) {
-    code += sourceFile.text.slice(cursorPosition, node.pos);
     cursorPosition = node.pos;
   }
 
   function visit(node: ts.Node) {
-    readThrough(node);
+    readThrough(node)
 
     if (node.flags & ts.ModifierFlags.Private) {
       // skip private nodes
       skip(node)
       return
     }
-
-    if (node.kind === ts.SyntaxKind.ImportDeclaration && (<ts.ImportDeclaration>node).importClause == null) {
-      // ignore side effects only imports (like import "source-map-support/register")
-      skip(node)
-      return
-    }
-
-    const replacement = replacer(node)
-    if (replacement != null) {
-      code += replacement
+    
+    if (replacer(node)) {
       skip(node)
     }
     else {
-      if (node.kind === ts.SyntaxKind.ClassDeclaration || node.kind === ts.SyntaxKind.InterfaceDeclaration || node.kind === ts.SyntaxKind.FunctionDeclaration) {
-        code += "\n"
-      }
       ts.forEachChild(node, visit)
     }
   }
 
   visit(sourceFile)
-  code += sourceFile.text.slice(cursorPosition)
-
-  return code
 }

@@ -33,11 +33,17 @@ export interface Class extends Member {
 export interface Variable extends Member {
   readonly node: ts.VariableStatement
   readonly isConst: boolean
-  readonly typeName: string
+  readonly types: Array<string>
 }
 
 export class SourceFileDescriptor {
   readonly classes: Array<Class>
   readonly functions: Array<MethodDescriptor>
   readonly variables: Array<Variable>
+}
+
+export interface SourceFileModuleInfo {
+  readonly id: string
+  readonly fileNameWithoutExt: string
+  readonly isMain: boolean
 }
