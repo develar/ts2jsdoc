@@ -1,5 +1,6 @@
 import * as ts from "typescript"
-import { JsDocGenerator } from "./JsDocGenerator"
+import * as path from "path"
+import { Example, JsDocGenerator, ModulePathMapper } from "./JsDocGenerator"
 import { parse as parseJsDoc, Tag } from "doctrine"
 import { Class, MethodDescriptor, Property, Variable } from "./psi"
 
@@ -43,7 +44,7 @@ export class JsDocRenderer {
     return result
   }
 
-  renderClassOrInterface(descriptor: Class, oldModulePathToNew: Map<string, string>): string {
+  renderClassOrInterface(descriptor: Class, modulePathMapper: ModulePathMapper, examples?: Array<Example>): string {
     this.indent = ""
 
     const tags: Array<string> = []
@@ -53,16 +54,20 @@ export class JsDocRenderer {
     }
 
     for (const parent of descriptor.parents) {
-      tags.push(`@extends ${oldModulePathToNew.get(parent) || parent}`)
+      tags.push(`@extends ${modulePathMapper(parent)}`)
     }
 
-    JsDocRenderer.renderProperties(descriptor.properties, tags, oldModulePathToNew)
+    JsDocRenderer.renderProperties(descriptor.properties, tags, modulePathMapper)
+    
+    for (const example of examples) {
+      tags.push(`@example <caption>${example.name}</caption> @lang ${example.lang}\n * ${example.content.trim().split("\n").join("\n * ")}`)
+    }
 
     let result = this.formatComment(descriptor.node, tags, parseExistingJsDoc(descriptor.node, tags) || "")
     result += `export class ${descriptor.name} {\n`
 
     for (const method of descriptor.methods) {
-      result += this.renderMethod(method, oldModulePathToNew)
+      result += this.renderMethod(method, modulePathMapper)
       if (method !== descriptor.methods[descriptor.methods.length - 1]) {
         result += "\n"
       }
@@ -72,7 +77,7 @@ export class JsDocRenderer {
     return result
   }
 
-  renderMethod(method: MethodDescriptor, oldModulePathToNew: Map<string, string>): string {
+  renderMethod(method: MethodDescriptor, modulePathMapper: ModulePathMapper): string {
     const tags = method.tags.slice()
 
     const paramNameToInfo = new Map<string, Tag>()
@@ -102,7 +107,7 @@ export class JsDocRenderer {
 
       const type = param.type
       if (type != null) {
-        text += ` ${renderTypes(this.generator.getTypeNamePathByNode(type), oldModulePathToNew)}`
+        text += ` ${renderTypes(this.generator.getTypeNamePathByNode(type), modulePathMapper)}`
       }
 
       const tag = paramNameToInfo.get(name)
@@ -164,25 +169,50 @@ export class JsDocRenderer {
 
   // form http://stackoverflow.com/questions/10490713/how-to-document-the-properties-of-the-object-in-the-jsdoc-3-tag-this
   // doesn't produce properties table, so, we use property tags
-  private static renderProperties(properties: Array<Property>, tags: Array<string>, oldModulePathToNew: Map<string, string>): void {
+  private static renderProperties(properties: Array<Property>, tags: Array<string>, modulePathMapper: ModulePathMapper): void {
+    loop:
     for (const descriptor of properties) {
-      const existingJsDoc = JsDocRenderer.getComment(descriptor.node)
+      const node = descriptor.node
+      const existingJsDoc = JsDocRenderer.getComment(node)
       const parsed = existingJsDoc == null ? null : parseJsDoc(existingJsDoc, {unwrap: true})
       let defaultValue = null
+      let isOptional = descriptor.isOptional
+      let description = parsed == null ? "" : parsed.description
       if (parsed != null) {
         for (const tag of parsed.tags) {
-          if (tag.title === "default") {
-            defaultValue = tag.description
-          }
-          else {
-            tags.push(`@${tag.title} ${tag.description}`)
+          switch (tag.title) {
+            case "default":
+              defaultValue = tag.description
+              break
+            
+            case "private":
+              continue loop
+            
+            case "required":
+              isOptional = false
+              break
+            
+            case "see":
+              description += `\nSee: ${tag.description}`
+              break
+            
+            case "deprecated":
+              description += `\nDeprecated: {tag.description}`
+              break
+            
+            default: {
+              const sourceFile = node.getSourceFile()
+              const leadingCommentRanges = ts.getLeadingCommentRanges(sourceFile.text, node.pos)
+              const position = sourceFile.getLineAndCharacterOfPosition(leadingCommentRanges[0].pos)
+              console.warn(`${path.basename(sourceFile.fileName)} ${position.line + 1}:${position.character} property level tag "${tag.title}" are not supported, please file issue`)
+            }
           }
         }
       }
 
-      let result = `@property ${renderTypes(descriptor.types, oldModulePathToNew)} `
+      let result = `@property ${renderTypes(descriptor.types, modulePathMapper)} `
 
-      if (descriptor.isOptional) {
+      if (isOptional) {
         result += "["
       }
       result += descriptor.name
@@ -191,13 +221,20 @@ export class JsDocRenderer {
         result += `=${defaultValue}`
       }
 
-      if (descriptor.isOptional) {
+      if (isOptional) {
         result += "]"
       }
 
-      const description = parsed == null ? null : parsed.description
       if (description != null) {
-        result += ` ${parseJsDoc(description, {unwrap: true}).description}`
+        description = description.trim()
+        if (description.length > 0) {
+          // one \n is not translated to break as markdown does (because in the code newline means that we don't want to use long line and have to break)
+          description = description
+            .replace(/\n\n/g, "<br><br>")
+            .replace(/\n/g, " ")
+          // http://stackoverflow.com/questions/28733282/jsdoc-multiline-description-property
+          result += ` ${description}`
+        }
       }
       tags.push(result)
     }
@@ -209,16 +246,26 @@ function parseExistingJsDoc(node: ts.Node, tags: Array<string>): string | null {
   const parsed = existingJsDoc == null ? null : parseJsDoc(existingJsDoc, {unwrap: true})
   if (parsed != null) {
     for (const tag of parsed.tags) {
-      tags.push(`@${tag.title} ${tag.description}`)
+      let text = `@${tag.title}`
+      
+      const caption = (<any>tag).caption
+      if (caption != null) {
+        text += ` <caption>${caption}</caption>`
+      }
+      
+      if (tag.description != null) {
+        text += ` ${tag.description}`
+      }
+      tags.push(text)
     }
   }
 
   return parsed == null ? null : parsed.description
 }
 
-function renderTypes(names: Array<string>, oldModulePathToNew?: Map<string, string>) {
-  if (oldModulePathToNew != null) {
-    names = names.map(it => oldModulePathToNew.get(it) || it)
+function renderTypes(names: Array<string>, modulePathMapper?: ModulePathMapper) {
+  if (modulePathMapper != null) {
+    names = names.map(it => modulePathMapper(it) || it)
   }
   return `{${names.join(" | ")}}`
 }

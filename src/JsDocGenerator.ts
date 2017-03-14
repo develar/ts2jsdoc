@@ -1,9 +1,20 @@
 import * as ts from "typescript"
 import * as path from "path"
-import { emptyDir, readJson, writeFile } from "fs-extra-p"
+import { emptyDir, readdir, readFile, readJson, writeFile } from "fs-extra-p"
 import { JsDocRenderer } from "./JsDocRenderer"
 import { checkErrors, processTree } from "./util"
 import { Class, Member, MethodDescriptor, Property, SourceFileDescriptor, SourceFileModuleInfo, Variable } from "./psi"
+import BluebirdPromise from "bluebird-lst"
+
+export interface TsToJsdocOptions {
+  readonly out: string
+  readonly externalIfNotMain?: string | null
+  
+  /**
+   * The path to examples dir.
+   */
+  readonly examples?: string | null
+}
 
 export async function generateAndWrite(basePath: string, config: ts.ParsedCommandLine, tsConfig: any) {
   let packageData: any = {name: "packageJsonNotDefined"}
@@ -15,20 +26,21 @@ export async function generateAndWrite(basePath: string, config: ts.ParsedComman
 
   const generator = generate(basePath, config, packageData.name, packageData == null ? null : packageData.main)
 
-  const out = path.resolve(basePath, tsConfig.jsdoc)
+  const options: TsToJsdocOptions = typeof tsConfig.jsdoc === "string" ? {out: tsConfig.jsdoc} : tsConfig.jsdoc 
+  const out = path.resolve(basePath, options.out)
   console.log(`Generating JSDoc to ${out}`)
   await emptyDir(out)
 
   const moduleNameToResult = generator.moduleNameToResult
-  const mainPsi = generator.moduleNameToResult.get(generator.moduleName)
+  const mainModuleName = generator.moduleName
+  const mainPsi = generator.moduleNameToResult.get(mainModuleName)
   
   const oldModulePathToNew = new Map<string, string>()
   for (const [id, names] of generator.mainMappings) {
     const psi = moduleNameToResult.get(id)
     for (const name of names) {
-      if (moveMember(psi.classes, mainPsi.classes, name, generator.moduleName)) {
-        oldModulePathToNew.set(`module:${id}.${name}`, `module:${generator.moduleName}.${name}`)
-        
+      if (moveMember(psi.classes, mainPsi.classes, name, mainModuleName)) {
+        oldModulePathToNew.set(`module:${id}.${name}`, `module:${mainModuleName}.${name}`)
         continue
       }
       
@@ -36,31 +48,78 @@ export async function generateAndWrite(basePath: string, config: ts.ParsedComman
     }
   }
   
+  
+  const exampleDir = options.examples == null ? null : path.resolve(basePath, options.examples)
+  const existingClassExampleDirs = exampleDir == null ? null : new Set((await readdir(exampleDir)).filter(it => it[0] != "." && !it.includes(".")))
+  
   for (const [moduleId, psi] of moduleNameToResult.entries()) {
     let result = ""
+    const externalToModuleName = new Map<string, string>()
     for (const d of copyAndSort(psi.variables)) {
       result += generator.renderer.renderVariable(d)
     }
     
+    const modulePathMapper: ModulePathMapper = oldPath => {
+      if (!oldPath.startsWith("module:")) {
+        return oldPath
+      }
+      
+      let result = oldModulePathToNew.get(oldPath)
+      if (result != null) {
+        return result
+      }
+      
+      if (moduleId === mainModuleName && options.externalIfNotMain != null) {
+        // external:electron-builder/out/platformPackager.PlatformPackager is not rendered by jsdoc2md,
+        // only PlatformPackager
+        const dotIndex = oldPath.lastIndexOf(".")
+        const value = oldPath.substring(dotIndex + 1)
+        externalToModuleName.set(value, oldPath.substring(oldPath.indexOf(":") + 1, dotIndex))
+        return `external:${value}`
+      }
+      
+      return oldPath
+    }
+    
     for (const d of copyAndSort(psi.classes)) {
-      result += generator.renderer.renderClassOrInterface(d, oldModulePathToNew)
+      let examples: Array<Example> = []
+      if (existingClassExampleDirs != null && existingClassExampleDirs.has(d.name)) {
+        const dir = path.join(exampleDir, d.name)
+        examples = await BluebirdPromise.map((await readdir(dir)).filter(it => it[0] != "." && it.includes(".")), async it => {
+          const ext = path.extname(it)
+          return <Example>{
+            name: path.basename(it, ext),
+            content: await readFile(path.join(dir, it), "utf8"),
+            lang: ext
+          }
+        })
+      }
+      
+      result += generator.renderer.renderClassOrInterface(d, modulePathMapper, examples)
     }
     
     for (const d of copyAndSort(psi.functions)) {
-      result += generator.renderer.renderMethod(d, oldModulePathToNew)
+      result += generator.renderer.renderMethod(d, modulePathMapper)
     }
     
     if (result === "") {
       continue
     }
+    
+    let externalJsDoc = ""
+    for (const [external, moduleId] of externalToModuleName) {
+      externalJsDoc += `/**\n* @external ${external}\n* @see ${options.externalIfNotMain}#module_${moduleId}.${external}\n*/\n`
+    }
 
-    await writeFile(path.join(out, moduleId.replace(/\//g, "-") + ".js"), `/** 
+    await writeFile(path.join(out, moduleId.replace(/\//g, "-") + ".js"), `${externalJsDoc}/** 
  * @module ${moduleId}
  */
 
 ${result}`)
   }
 }
+
+export type ModulePathMapper = (oldPath: string) => string
 
 function moveMember<T extends Member>(members: Array<T>, mainPsiMembers: Array<T>, name: string, newId: string | null = null): boolean {
   const index = members.findIndex(it => it.name === name)
@@ -265,7 +324,7 @@ export class JsDocGenerator {
       return null
     }
 
-    if (type.flags & ts.TypeFlags.UnionOrIntersection) {
+    if (type.flags & ts.TypeFlags.UnionOrIntersection && !(type.flags & ts.TypeFlags.Enum)) {
       return this.typesToList((<ts.UnionOrIntersectionType>type).types, node)
     }
     
@@ -486,4 +545,10 @@ function trimMutatorPrefix(name: string) {
     return name[3].toLowerCase() + name.substring(4)
   }
   return name
+}
+
+export interface Example {
+  name: string
+  content: string
+  lang: string
 }
