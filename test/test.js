@@ -8,7 +8,7 @@ test("interface from namespace", () => {
     
     let result = ""
     for (const [moduleId, psi] of generator.moduleNameToResult.entries()) {
-        for (const d of psi.variables) {
+        for (const d of psi.members) {
           result += generator.renderer.renderVariable(d)
         }
         for (const d of psi.classes) {

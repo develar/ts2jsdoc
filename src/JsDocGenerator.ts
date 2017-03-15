@@ -3,7 +3,7 @@ import * as path from "path"
 import { emptyDir, readdir, readFile, readJson, writeFile } from "fs-extra-p"
 import { JsDocRenderer } from "./JsDocRenderer"
 import { checkErrors, processTree } from "./util"
-import { Class, Member, MethodDescriptor, Property, SourceFileDescriptor, SourceFileModuleInfo, Variable } from "./psi"
+import { Class, Descriptor, Member, MethodDescriptor, Property, SourceFileDescriptor, SourceFileModuleInfo, Type, Variable } from "./psi"
 import BluebirdPromise from "bluebird-lst"
 
 export interface TsToJsdocOptions {
@@ -44,7 +44,7 @@ export async function generateAndWrite(basePath: string, config: ts.ParsedComman
         continue
       }
       
-      moveMember(psi.functions, mainPsi.functions, name) || moveMember(psi.variables, mainPsi.variables, name)
+      moveMember(psi.functions, mainPsi.functions, name) || moveMember(psi.members, mainPsi.members, name)
     }
   }
   
@@ -53,12 +53,6 @@ export async function generateAndWrite(basePath: string, config: ts.ParsedComman
   const existingClassExampleDirs = exampleDir == null ? null : new Set((await readdir(exampleDir)).filter(it => it[0] != "." && !it.includes(".")))
   
   for (const [moduleId, psi] of moduleNameToResult.entries()) {
-    let result = ""
-    const externalToModuleName = new Map<string, string>()
-    for (const d of copyAndSort(psi.variables)) {
-      result += generator.renderer.renderVariable(d)
-    }
-    
     const modulePathMapper: ModulePathMapper = oldPath => {
       if (!oldPath.startsWith("module:")) {
         return oldPath
@@ -79,6 +73,17 @@ export async function generateAndWrite(basePath: string, config: ts.ParsedComman
       }
       
       return oldPath
+    }
+    
+    let result = ""
+    const externalToModuleName = new Map<string, string>()
+    for (const d of copyAndSort(psi.members)) {
+      if ((<any>d).kind == null) {
+        result += generator.renderer.renderVariable(<Variable>d, modulePathMapper)
+      }
+      else {
+        result += generator.renderer.renderMember(<Descriptor>d)
+      }
     }
     
     for (const d of copyAndSort(psi.classes)) {
@@ -215,7 +220,7 @@ export class JsDocGenerator {
 
     const classes: Array<Class> = []
     const functions: Array<MethodDescriptor> = []
-    const variables: Array<Variable> = []
+    const members: Array<Variable | Descriptor> = []
 
     processTree(sourceFile, (node) => {
       if (node.kind === ts.SyntaxKind.InterfaceDeclaration || node.kind === ts.SyntaxKind.ClassDeclaration) {
@@ -240,7 +245,13 @@ export class JsDocGenerator {
       else if (node.kind === ts.SyntaxKind.VariableStatement) {
         const descriptor = this.describeVariable(<ts.VariableStatement>node)
         if (descriptor != null) {
-          variables.push(descriptor)
+          members.push(descriptor)
+        }
+      }
+      else if (node.kind === ts.SyntaxKind.EnumDeclaration) {
+        const descriptor = this.describeEnum(<ts.EnumDeclaration>node)
+        if (descriptor != null) {
+          members.push(descriptor)
         }
       }
       return true
@@ -248,12 +259,12 @@ export class JsDocGenerator {
 
     const existingPsi = this.moduleNameToResult.get(moduleId.id)
     if (existingPsi == null) {
-      this.moduleNameToResult.set(moduleId.id, {classes, functions, variables})
+      this.moduleNameToResult.set(moduleId.id, {classes, functions, members})
     }
     else {
       existingPsi.classes.push(...classes)
       existingPsi.functions.push(...functions)
-      existingPsi.variables.push(...variables)
+      existingPsi.members.push(...members)
     }
   }
   
@@ -292,7 +303,7 @@ export class JsDocGenerator {
     this.mainMappings.set(this.sourceFileToModuleId(sourceFile).id, names)
   }
 
-  getTypeNamePathByNode(node: ts.Node): Array<string> | null {
+  getTypeNamePathByNode(node: ts.Node): Array<string | Type> | null {
     if (node.kind === ts.SyntaxKind.UnionType) {
       return this.typesToList((<ts.UnionType>(<any>node)).types, node)
     }
@@ -318,25 +329,17 @@ export class JsDocGenerator {
       const text = (<ts.LiteralLikeNode>(<any>(<ts.LiteralTypeNode>node).literal)).text
       return [`"${text}"`]
     }
+    else if (node.kind === ts.SyntaxKind.TypeLiteral) {
+      // todo
+      return ['Object.<string, any>']
+    }
 
     const type = this.program.getTypeChecker().getTypeAtLocation(node)
-    if (type == null) {
-      return null
-    }
-
-    if (type.flags & ts.TypeFlags.UnionOrIntersection && !(type.flags & ts.TypeFlags.Enum)) {
-      return this.typesToList((<ts.UnionOrIntersectionType>type).types, node)
-    }
-    
-    let result = this.getTypeNamePath(type)
-    if (result == null) {
-      throw new Error("Cannot infer getTypeNamePath")
-    }
-    return [result]
+    return type == null ? null : this.getTypeNames(type, node)
   }
 
   private typesToList(types: Array<ts.Type>, node: ts.Node) {
-    const typeNames: Array<string> = []
+    const typeNames: Array<string | Type> = []
     for (const type of types) {
       const name = (<any>type).kind == null ? [this.getTypeNamePath(<any>type)] : this.getTypeNamePathByNode(<any>type)
       if (name == null) {
@@ -345,6 +348,27 @@ export class JsDocGenerator {
       typeNames.push(...name)
     }
     return typeNames
+  }
+
+  getTypeNames(type: ts.Type, node: ts.Node): Array<string | Type> | null {
+    if (type.flags & ts.TypeFlags.UnionOrIntersection && !(type.flags & ts.TypeFlags.Enum)) {
+      return this.typesToList((<ts.UnionOrIntersectionType>type).types, node)
+    }
+
+    let result = this.getTypeNamePath(type)
+    if (result == null) {
+      throw new Error("Cannot infer getTypeNamePath")
+    }
+
+    const typeArguments = (<ts.TypeReference>type).typeArguments
+    if (typeArguments != null) {
+      const subTypes = []
+      for (const type of typeArguments) {
+        subTypes.push(...this.getTypeNames(type, node))
+      }
+      return [{name: result, subTypes: subTypes}]
+    }
+    return [result]
   }
 
   getTypeNamePath(type: ts.Type): string | null {
@@ -407,6 +431,47 @@ export class JsDocGenerator {
     console.warn(`Cannot find parent for ${symbol}`)
     return null
   }
+  
+  private describeEnum(node: ts.EnumDeclaration): Descriptor {
+    const flags = ts.getCombinedModifierFlags(node)
+    if (!(flags & ts.ModifierFlags.Export)) {
+      return null
+    }
+    
+    const type = {
+      names: ["number"]
+    }
+    
+    const name = (<ts.Identifier>node.name).text
+    const moduleId = this.computeTypePath()
+    const id = `${moduleId}.${name}`
+    
+    const properties: Array<Descriptor> = []
+    for (const member of node.members) {
+      const name = (<ts.Identifier>member.name).text
+      properties.push({
+        name: name,
+        kind: "member",
+        scope: "static",
+        memberof: id,
+        type: type,
+      })
+    }
+
+    // we don't set readonly because it is clear that enum is not mutable
+    // e.g. jsdoc2md wil add useless "Read only: true"
+    return {
+      node: node,
+      id: id,
+      name: name,
+      longname: id,
+      kind: "enum",
+      scope: "static",
+      memberof: moduleId,
+      type: type,
+      properties: properties,
+    }
+  }
 
   private describeVariable(node: ts.VariableStatement): Variable {
     const flags = ts.getCombinedModifierFlags(node)
@@ -456,7 +521,7 @@ export class JsDocGenerator {
     const className = (<ts.Identifier>nodeDeclaration.name).text
 
     const clazz = <ts.ClassDeclaration>node
-    let parents: Array<string> = []
+    let parents: Array<string | Type> = []
     if (clazz.heritageClauses != null) {
       for (const heritageClause of clazz.heritageClauses) {
         if (heritageClause.types != null) {

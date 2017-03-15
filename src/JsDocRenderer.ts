@@ -2,7 +2,7 @@ import * as ts from "typescript"
 import * as path from "path"
 import { Example, JsDocGenerator, ModulePathMapper } from "./JsDocGenerator"
 import { parse as parseJsDoc, Tag } from "doctrine"
-import { Class, MethodDescriptor, Property, Variable } from "./psi"
+import { Class, Descriptor, MethodDescriptor, Property, Type, Variable } from "./psi"
 
 export class JsDocRenderer {
   indent: string = ""
@@ -54,7 +54,8 @@ export class JsDocRenderer {
     }
 
     for (const parent of descriptor.parents) {
-      tags.push(`@extends ${modulePathMapper(parent)}`)
+      // ignore <> type params because JsDoc expects namepath, but not type expression 
+      tags.push(`@extends ${renderType(parent, modulePathMapper, true)}`)
     }
 
     JsDocRenderer.renderProperties(descriptor.properties, tags, modulePathMapper)
@@ -96,7 +97,7 @@ export class JsDocRenderer {
           returns = tag
         }
         else {
-          tags.push(`@${tag.title} ${tag.description}`)
+          tags.push(printTag(tag))
         }
       }
     }
@@ -112,17 +113,17 @@ export class JsDocRenderer {
 
       const tag = paramNameToInfo.get(name)
       text += ` ${name}`
-      if (tag != null) {
+      if (tag != null && tag.description != null) {
         text += ` ${tag.description}`
       }
       tags.push(text)
     }
 
     const signature = this.generator.program.getTypeChecker().getSignatureFromDeclaration(method.node)
-    const returnType = this.generator.getTypeNamePath(signature.getReturnType())
+    const returnTypes = this.generator.getTypeNames(signature.getReturnType(), method.node)
     // http://stackoverflow.com/questions/4759175/how-to-return-void-in-jsdoc
-    if (returnType !== "void") {
-      let text = `@returns ${renderTypes([returnType])}`
+    if (!returnTypes.includes("void")) {
+      let text = `@returns ${renderTypes(returnTypes, modulePathMapper)}`
       if (returns != null) {
         text += ` ${returns.description}`
       }
@@ -152,10 +153,10 @@ export class JsDocRenderer {
     return null
   }
 
-  renderVariable(descriptor: Variable): string {
+  renderVariable(descriptor: Variable, modulePathMapper: ModulePathMapper): string {
     this.indent = ""
 
-    const tags = [`@type ${renderTypes(descriptor.types)}`]
+    const tags = [`@type ${renderTypes(descriptor.types, modulePathMapper)}`]
 
     if (descriptor.isConst) {
       tags.push("@constant")
@@ -163,6 +164,23 @@ export class JsDocRenderer {
 
     let result = this.formatComment(descriptor.node, tags)
     // jsdoc cannot parse const, so, we always use var
+    result += `export var ${descriptor.name}\n`
+    return result
+  }
+  
+  renderMember(descriptor: Descriptor) {
+    const tags = [
+      "@enum {number}"
+    ]
+    
+    if (descriptor.readonly) {
+      tags.push("@readonly") 
+    }
+    for (const property of descriptor.properties) {
+      tags.push(`@property ${property.name}`) 
+    }
+    
+    let result = this.formatComment(descriptor.node!, tags)
     result += `export var ${descriptor.name}\n`
     return result
   }
@@ -246,26 +264,44 @@ function parseExistingJsDoc(node: ts.Node, tags: Array<string>): string | null {
   const parsed = existingJsDoc == null ? null : parseJsDoc(existingJsDoc, {unwrap: true})
   if (parsed != null) {
     for (const tag of parsed.tags) {
-      let text = `@${tag.title}`
-      
-      const caption = (<any>tag).caption
-      if (caption != null) {
-        text += ` <caption>${caption}</caption>`
-      }
-      
-      if (tag.description != null) {
-        text += ` ${tag.description}`
-      }
-      tags.push(text)
+      tags.push(printTag(tag))
     }
   }
 
   return parsed == null ? null : parsed.description
 }
 
-function renderTypes(names: Array<string>, modulePathMapper?: ModulePathMapper) {
-  if (modulePathMapper != null) {
-    names = names.map(it => modulePathMapper(it) || it)
+function printTag(tag: Tag) {
+  let text = `@${tag.title}`
+
+  const caption = (<any>tag).caption
+  if (caption != null) {
+    text += ` <caption>${caption}</caption>`
   }
-  return `{${names.join(" | ")}}`
+
+  if (tag.description != null) {
+    text += ` ${tag.description}`
+  }
+  return text
+}
+
+// (oldPath: string) => oldPath
+
+function renderTypes(names: Array<string | Type>, modulePathMapper: ModulePathMapper): string {
+  return `{${_renderTypes(names, modulePathMapper)}}`
+}
+
+function _renderTypes(names: Array<string | Type>, modulePathMapper: ModulePathMapper): string {
+  return names.map(it => renderType(it, modulePathMapper)).join(" | ")
+}
+
+function renderType(name: string | Type, modulePathMapper: ModulePathMapper, ignoreSubtypes = false): string {
+  if (typeof name === "string") {
+    return modulePathMapper(name)
+  }
+  const type = <Type>name
+  if (ignoreSubtypes) {
+    return modulePathMapper(type.name)
+  }
+  return modulePathMapper(type.name) + "<" + _renderTypes(type.subTypes, modulePathMapper) + ">"
 }

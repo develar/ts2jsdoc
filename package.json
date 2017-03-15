@@ -1,7 +1,7 @@
 {
   "name": "ts-jsdoc",
   "description": "Transform TypeScript to JSDoc annotated JS code",
-  "version": "1.0.7",
+  "version": "1.1.0",
   "license": "MIT",
   "bin": {
     "ts2jsdoc": "out/ts2jsdoc.js"
