@@ -193,7 +193,7 @@ export class JsDocRenderer {
       const node = descriptor.node
       const existingJsDoc = JsDocRenderer.getComment(node)
       const parsed = existingJsDoc == null ? null : parseJsDoc(existingJsDoc, {unwrap: true})
-      let defaultValue = null
+      let defaultValue = descriptor.defaultValue
       let isOptional = descriptor.isOptional
       let description = parsed == null ? "" : parsed.description
       if (parsed != null) {

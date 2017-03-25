@@ -15,8 +15,9 @@ export interface MethodDescriptor extends Member {
 export interface Property extends Member {
   readonly types: Array<string | Type>
 
-  readonly node: ts.PropertySignature
+  readonly node: ts.PropertySignature | ts.PropertyDeclaration
 
+  readonly defaultValue: any
   readonly isOptional: boolean
 }
 

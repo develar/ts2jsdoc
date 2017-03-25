@@ -16,6 +16,8 @@ export interface TsToJsdocOptions {
   readonly examples?: string | null
 }
 
+const vm = require("vm")
+
 export async function generateAndWrite(basePath: string, config: ts.ParsedCommandLine, tsConfig: any) {
   let packageData: any = {name: "packageJsonNotDefined"}
   try {
@@ -47,7 +49,6 @@ export async function generateAndWrite(basePath: string, config: ts.ParsedComman
       moveMember(psi.functions, mainPsi.functions, name) || moveMember(psi.members, mainPsi.members, name)
     }
   }
-  
   
   const exampleDir = options.examples == null ? null : path.resolve(basePath, options.examples)
   const existingClassExampleDirs = exampleDir == null ? null : new Set((await readdir(exampleDir)).filter(it => it[0] != "." && !it.includes(".")))
@@ -351,7 +352,7 @@ export class JsDocGenerator {
   }
 
   getTypeNames(type: ts.Type, node: ts.Node): Array<string | Type> | null {
-    if (type.flags & ts.TypeFlags.UnionOrIntersection && !(type.flags & ts.TypeFlags.Enum)) {
+    if (type.flags & ts.TypeFlags.UnionOrIntersection && !(type.flags & ts.TypeFlags.Enum) && !(type.flags & ts.TypeFlags.Boolean)) {
       return this.typesToList((<ts.UnionOrIntersectionType>type).types, node)
     }
 
@@ -544,6 +545,12 @@ export class JsDocGenerator {
           properties.push(p)
         }
       }
+      else if (member.kind === ts.SyntaxKind.PropertyDeclaration) {
+        const p = this.describeProperty(<any>member)
+        if (p != null) {
+          properties.push(p)
+        }
+      }
       else if (member.kind === ts.SyntaxKind.MethodDeclaration || member.kind === ts.SyntaxKind.MethodSignature) {
         const m = this.renderMethod(<any>member, className)
         if (m != null) {
@@ -569,14 +576,51 @@ export class JsDocGenerator {
     }
   }
 
-  private describeProperty(node: ts.PropertySignature): Property | null {
+  private describeProperty(node: ts.PropertySignature | ts.PropertyDeclaration): Property | null {
     const flags = ts.getCombinedModifierFlags(node)
     if (flags & ts.ModifierFlags.Private) {
       return null
     }
 
     const name = (<ts.Identifier>node.name).text
-    return {name, types: this.getTypeNamePathByNode(node.type), node, isOptional: node.questionToken != null}
+    
+    let types
+    if (node.type == null) {
+      const type = this.program.getTypeChecker().getTypeAtLocation(node)
+      types = type == null ? null : this.getTypeNames(type, node)
+    }
+    else {
+      types = this.getTypeNamePathByNode(node.type)
+    }
+
+    let isOptional = node.questionToken != null
+    let defaultValue = null
+    const initializer = node.initializer
+    if (initializer != null) {
+      if ((<any>initializer).expression != null || (<ts.Node>initializer).kind === ts.SyntaxKind.NoSubstitutionTemplateLiteral) {
+        defaultValue = initializer.getText()
+      }
+      else {
+        try {
+          const sandbox = {sandboxvar: null as any}
+          vm.runInNewContext(`sandboxvar=${initializer.getText()}`, sandbox)
+
+          const val = sandbox.sandboxvar
+          if (val === null || typeof val === "string" || typeof val === "number" || "boolean" || Object.prototype.toString.call(val) === "[object Array]") {
+            defaultValue = val
+          }
+          else if (val) {
+            console.warn(`unknown initializer for property ${name}: ${val}`)
+          }
+        }
+        catch (e) {
+          console.info(`exception evaluating initializer for property ${name}`)
+          defaultValue = initializer.getText()
+        }
+      }
+    }
+
+    return {name, types, node, isOptional: isOptional || defaultValue != null || (flags & ts.ModifierFlags.Readonly) > 0 || types.includes("null"), defaultValue}
   }
 
   private renderMethod(node: ts.SignatureDeclaration, className: string): MethodDescriptor | null {
