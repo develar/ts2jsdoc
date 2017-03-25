@@ -540,13 +540,13 @@ export class JsDocGenerator {
     const properties: Array<Property> = []
     for (const member of nodeDeclaration.members) {
       if (member.kind === ts.SyntaxKind.PropertySignature) {
-        const p = this.describeProperty(<any>member)
+        const p = this.describeProperty(<any>member, node.kind === ts.SyntaxKind.ClassDeclaration)
         if (p != null) {
           properties.push(p)
         }
       }
       else if (member.kind === ts.SyntaxKind.PropertyDeclaration) {
-        const p = this.describeProperty(<any>member)
+        const p = this.describeProperty(<any>member, node.kind === ts.SyntaxKind.ClassDeclaration)
         if (p != null) {
           properties.push(p)
         }
@@ -576,7 +576,7 @@ export class JsDocGenerator {
     }
   }
 
-  private describeProperty(node: ts.PropertySignature | ts.PropertyDeclaration): Property | null {
+  private describeProperty(node: ts.PropertySignature | ts.PropertyDeclaration, isParentClass: boolean): Property | null {
     const flags = ts.getCombinedModifierFlags(node)
     if (flags & ts.ModifierFlags.Private) {
       return null
@@ -620,7 +620,11 @@ export class JsDocGenerator {
       }
     }
 
-    return {name, types, node, isOptional: isOptional || defaultValue != null || (flags & ts.ModifierFlags.Readonly) > 0 || types.includes("null"), defaultValue}
+    isOptional = isOptional || defaultValue != null || types.includes("null")
+    if (!isOptional && isParentClass && (flags & ts.ModifierFlags.Readonly) > 0) {
+      isOptional = true
+    }
+    return {name, types, node, isOptional: isOptional, defaultValue}
   }
 
   private renderMethod(node: ts.SignatureDeclaration, className: string): MethodDescriptor | null {
