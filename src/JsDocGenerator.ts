@@ -28,7 +28,11 @@ export async function generateAndWrite(basePath: string, config: ts.ParsedComman
 
   const generator = generate(basePath, config, packageData.name, packageData == null ? null : packageData.main)
 
-  const options: TsToJsdocOptions = typeof tsConfig.jsdoc === "string" ? {out: tsConfig.jsdoc} : tsConfig.jsdoc 
+  const options: TsToJsdocOptions = typeof tsConfig.jsdoc === "string" ? {out: tsConfig.jsdoc} : tsConfig.jsdoc
+  if (options.out == null) {
+    throw new Error("Please specify out in the tsConfig.jsdoc (https://github.com/develar/ts2jsdoc#generate-jsdoc-from-typescript)")
+  }
+
   const out = path.resolve(basePath, options.out)
   console.log(`Generating JSDoc to ${out}`)
   await emptyDir(out)
