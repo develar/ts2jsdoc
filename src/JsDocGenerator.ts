@@ -109,7 +109,7 @@ export async function generateAndWrite(basePath: string, config: ts.ParsedComman
     }
     
     for (const d of copyAndSort(psi.functions)) {
-      result += generator.renderer.renderMethod(d, modulePathMapper)
+      result += generator.renderer.renderMethod(d, modulePathMapper, null)
     }
     
     if (result === "") {
@@ -229,7 +229,7 @@ export class JsDocGenerator {
 
     processTree(sourceFile, (node) => {
       if (node.kind === ts.SyntaxKind.InterfaceDeclaration || node.kind === ts.SyntaxKind.ClassDeclaration) {
-        const descriptor = this.renderClassOrInterface(node)
+        const descriptor = this.processClassOrInterface(node)
         if (descriptor != null) {
           classes.push(descriptor)
         }
@@ -516,7 +516,7 @@ export class JsDocGenerator {
     return {name: (<ts.Identifier>node.name).text, node: node, tags: []}
   }
 
-  private renderClassOrInterface(node: ts.Node): Class | null {
+  private processClassOrInterface(node: ts.Node): Class | null {
     const flags = ts.getCombinedModifierFlags(node)
     if (!(flags & ts.ModifierFlags.Export)) {
       return null
@@ -646,9 +646,6 @@ export class JsDocGenerator {
     }
 
     const name = (<ts.Identifier>node.name).text
-    // https://github.com/jsdoc3/jsdoc/issues/1137#issuecomment-281257286
-    tags.push(`@function ${this.computeTypePath()}.${className}#${name}`)
-
     return {name, tags, isProtected, node}
   }
 

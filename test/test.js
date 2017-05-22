@@ -12,7 +12,7 @@ test("interface from namespace", () => {
           result += generator.renderer.renderVariable(d)
         }
         for (const d of psi.classes) {
-          result += generator.renderer.renderClassOrInterface(d, new Map())
+          result += generator.renderer.processClassOrInterface(d, new Map())
         }
         for (const d of psi.functions) {
           result += generator.renderer.renderMethod(d)

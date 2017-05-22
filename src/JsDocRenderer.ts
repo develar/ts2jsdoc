@@ -18,6 +18,13 @@ export class JsDocRenderer {
       .join(`\n${this.indent} * `)
   }
 
+  normalizeDescription2(comment: string) {
+    return this.indent + " * " + comment
+      .split("\n")
+      .map(it => it.trim())
+      .join(`\n${this.indent} * `)
+  }
+
   formatComment(node: ts.Node, tags: Array<string>, description?: string): string {
     const indent = this.indent
 
@@ -30,7 +37,7 @@ export class JsDocRenderer {
       }
     }
     else if (description.length > 0) {
-      result += `${indent} * ${description}\n`
+      result += `${this.normalizeDescription2(description)}\n`
     }
 
     // must be added after user description
@@ -67,18 +74,20 @@ export class JsDocRenderer {
     let result = this.formatComment(descriptor.node, tags, parseExistingJsDoc(descriptor.node, tags) || "")
     result += `export class ${descriptor.name} {\n`
 
+    this.indent = "  "
     for (const method of descriptor.methods) {
-      result += this.renderMethod(method, modulePathMapper)
+      result += this.renderMethod(method, modulePathMapper, descriptor)
       if (method !== descriptor.methods[descriptor.methods.length - 1]) {
         result += "\n"
       }
     }
+    this.indent = ""
 
     result += "}\n\n"
     return result
   }
 
-  renderMethod(method: MethodDescriptor, modulePathMapper: ModulePathMapper): string {
+  renderMethod(method: MethodDescriptor, modulePathMapper: ModulePathMapper, classDescriptor: Class | null): string {
     const tags = method.tags.slice()
 
     const paramNameToInfo = new Map<string, Tag>()
@@ -111,12 +120,17 @@ export class JsDocRenderer {
         text += ` ${renderTypes(this.generator.getTypeNamePathByNode(type), modulePathMapper)}`
       }
 
-      const tag = paramNameToInfo.get(name)
       text += ` ${name}`
+      const tag = paramNameToInfo.get(name)
       if (tag != null && tag.description != null) {
         text += ` ${tag.description}`
       }
       tags.push(text)
+    }
+
+    if (classDescriptor != null) {
+      // https://github.com/jsdoc3/jsdoc/issues/1137#issuecomment-281257286
+      tags.push(`@function ${classDescriptor.modulePath}.${classDescriptor.name}#${method.name}`)
     }
 
     const signature = this.generator.program.getTypeChecker().getSignatureFromDeclaration(method.node)
