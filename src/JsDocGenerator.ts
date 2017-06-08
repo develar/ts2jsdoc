@@ -9,7 +9,8 @@ import BluebirdPromise from "bluebird-lst"
 export interface TsToJsdocOptions {
   readonly out: string
   readonly externalIfNotMain?: string | null
-  
+  readonly access?: string | null
+
   /**
    * The path to examples dir.
    */
@@ -26,12 +27,13 @@ export async function generateAndWrite(basePath: string, config: ts.ParsedComman
   catch (e) {
   }
 
-  const generator = generate(basePath, config, packageData.name, packageData == null ? null : packageData.main)
 
   const options: TsToJsdocOptions = typeof tsConfig.jsdoc === "string" ? {out: tsConfig.jsdoc} : tsConfig.jsdoc
   if (options.out == null) {
     throw new Error("Please specify out in the tsConfig.jsdoc (https://github.com/develar/ts2jsdoc#generate-jsdoc-from-typescript)")
   }
+
+  const generator = generate(basePath, config, packageData.name, packageData == null ? null : packageData.main, options)
 
   const out = path.resolve(basePath, options.out)
   console.log(`Generating JSDoc to ${out}`)
@@ -151,7 +153,7 @@ function copyAndSort<T extends Member>(members: Array<T>): Array<T> {
   return members.slice().sort((a, b) => a.name.localeCompare(b.name))
 }
 
-export function generate(basePath: string, config: ts.ParsedCommandLine, moduleName: string, main: string | null): JsDocGenerator {
+export function generate(basePath: string, config: ts.ParsedCommandLine, moduleName: string, main: string | null, options: TsToJsdocOptions): JsDocGenerator {
   const compilerOptions = config.options
   const compilerHost = ts.createCompilerHost(compilerOptions)
   const program = ts.createProgram(config.fileNames, compilerOptions, compilerHost)
@@ -162,7 +164,7 @@ export function generate(basePath: string, config: ts.ParsedCommandLine, moduleN
     throw new Error("outDir is not specified in the compilerOptions")
   }
 
-  const generator = new JsDocGenerator(program, path.relative(basePath, compilerOptions.outDir), moduleName, main, (<any>program).getCommonSourceDirectory())
+  const generator = new JsDocGenerator(program, path.relative(basePath, compilerOptions.outDir), moduleName, main, (<any>program).getCommonSourceDirectory(), options)
   for (const sourceFile of program.getSourceFiles()) {
     if (!sourceFile.isDeclarationFile) {
       generator.generate(sourceFile)
@@ -180,7 +182,7 @@ export class JsDocGenerator {
   
   readonly mainMappings = new Map<string, Array<string>>() 
 
-  constructor(readonly program: ts.Program, readonly relativeOutDir: string, readonly moduleName: string, private readonly mainFile: string, private readonly commonSourceDirectory: string) {
+  constructor(readonly program: ts.Program, readonly relativeOutDir: string, readonly moduleName: string, private readonly mainFile: string, private readonly commonSourceDirectory: string, private readonly options: TsToJsdocOptions) {
   }
 
   private sourceFileToModuleId(sourceFile: ts.SourceFile): SourceFileModuleInfo {
@@ -556,7 +558,7 @@ export class JsDocGenerator {
         }
       }
       else if (member.kind === ts.SyntaxKind.MethodDeclaration || member.kind === ts.SyntaxKind.MethodSignature) {
-        const m = this.renderMethod(<any>member, className)
+        const m = this.renderMethod(<any>member)
         if (m != null) {
           methods.push(m)
         }
@@ -583,6 +585,9 @@ export class JsDocGenerator {
   private describeProperty(node: ts.PropertySignature | ts.PropertyDeclaration, isParentClass: boolean): Property | null {
     const flags = ts.getCombinedModifierFlags(node)
     if (flags & ts.ModifierFlags.Private) {
+      return null
+    }
+    if (this.options.access === "public" && flags & ts.ModifierFlags.Protected) {
       return null
     }
 
@@ -631,10 +636,13 @@ export class JsDocGenerator {
     return {name, types, node, isOptional: isOptional, defaultValue}
   }
 
-  private renderMethod(node: ts.SignatureDeclaration, className: string): MethodDescriptor | null {
+  private renderMethod(node: ts.SignatureDeclaration): MethodDescriptor | null {
     // node.flags doesn't report correctly for private methods
     const flags = ts.getCombinedModifierFlags(node)
     if (flags & ts.ModifierFlags.Private) {
+      return null
+    }
+    if (this.options.access === "public" && flags & ts.ModifierFlags.Protected) {
       return null
     }
 
