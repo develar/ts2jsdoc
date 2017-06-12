@@ -557,6 +557,12 @@ export class JsDocGenerator {
           properties.push(p)
         }
       }
+      else if (member.kind === ts.SyntaxKind.GetAccessor) {
+        const p = this.describeProperty(<any>member, node.kind === ts.SyntaxKind.ClassDeclaration)
+        if (p != null) {
+          properties.push(p)
+        }
+      }
       else if (member.kind === ts.SyntaxKind.MethodDeclaration || member.kind === ts.SyntaxKind.MethodSignature) {
         const m = this.renderMethod(<any>member)
         if (m != null) {
