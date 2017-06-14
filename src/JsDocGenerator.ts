@@ -5,6 +5,7 @@ import { JsDocRenderer } from "./JsDocRenderer"
 import { checkErrors, processTree } from "./util"
 import { Class, Descriptor, Member, MethodDescriptor, Property, SourceFileDescriptor, SourceFileModuleInfo, Type, Variable } from "./psi"
 import BluebirdPromise from "bluebird-lst"
+import { Annotation, parse as parseJsDoc } from "doctrine"
 
 export interface TsToJsdocOptions {
   readonly out: string
@@ -350,7 +351,7 @@ export class JsDocGenerator {
     for (const type of types) {
       const name = (<any>type).kind == null ? [this.getTypeNamePath(<any>type)] : this.getTypeNamePathByNode(<any>type)
       if (name == null) {
-        throw new Error("cannot get name for " + node.getText(node.getSourceFile()))
+        throw new Error(`cannot get name for ${node.getText(node.getSourceFile())}`)
       }
       typeNames.push(...name)
     }
@@ -358,7 +359,7 @@ export class JsDocGenerator {
   }
 
   getTypeNames(type: ts.Type, node: ts.Node): Array<string | Type> | null {
-    if (type.flags & ts.TypeFlags.UnionOrIntersection && !(type.flags & ts.TypeFlags.Enum) && !(type.flags & ts.TypeFlags.Boolean)) {
+    if (type.flags & ts.TypeFlags.UnionOrIntersection && !(type.flags & ts.TypeFlags.Enum) && !(type.flags & ts.TypeFlags.EnumLiteral) && !(type.flags & ts.TypeFlags.Boolean) && !(type.flags & ts.TypeFlags.BooleanLiteral)) {
       return this.typesToList((<ts.UnionOrIntersectionType>type).types, node)
     }
 
@@ -401,7 +402,7 @@ export class JsDocGenerator {
       return "any"
     }
     if (type.flags & ts.TypeFlags.Literal) {
-      return `"${(<ts.LiteralType>type).text}"`
+      return `"${(<ts.LiteralType>type).value}"`
     }
 
     const symbol = type.symbol
@@ -515,7 +516,23 @@ export class JsDocGenerator {
     if (!(flags & ts.ModifierFlags.Export)) {
       return null
     }
-    return {name: (<ts.Identifier>node.name).text, node: node, tags: []}
+
+    const existingJsDoc = JsDocRenderer.getComment(node)
+    const jsDoc = existingJsDoc == null ? null : parseJsDoc(existingJsDoc, {unwrap: true})
+    return this.isHidden(jsDoc) ? null : {name: (<ts.Identifier>node.name).text, node: node, tags: [], jsDoc }
+  }
+
+  private isHidden(jsDoc: Annotation | null): boolean {
+    if (jsDoc == null) {
+      return false
+    }
+
+    for (const tag of jsDoc.tags) {
+      if (tag.title === "internal" || tag.title === "private") {
+        return true
+      }
+    }
+    return false
   }
 
   private processClassOrInterface(node: ts.Node): Class | null {
@@ -660,7 +677,9 @@ export class JsDocGenerator {
     }
 
     const name = (<ts.Identifier>node.name).text
-    return {name, tags, isProtected, node}
+    const existingJsDoc = JsDocRenderer.getComment(node)
+    const jsDoc = existingJsDoc == null ? null : parseJsDoc(existingJsDoc, {unwrap: true})
+    return this.isHidden(jsDoc) ? null : {name, tags, isProtected, node, jsDoc}
   }
 
   private computeTypePath(): string {

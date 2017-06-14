@@ -93,8 +93,7 @@ export class JsDocRenderer {
     const paramNameToInfo = new Map<string, Tag>()
     let returns: Tag | null
 
-    const existingJsDoc = JsDocRenderer.getComment(method.node)
-    const parsed = existingJsDoc == null ? null : parseJsDoc(existingJsDoc, {unwrap: true})
+    const parsed = method.jsDoc
     if (parsed != null) {
       for (const tag of parsed.tags) {
         if (tag.title === "param") {

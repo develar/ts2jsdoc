@@ -1,4 +1,5 @@
 import * as ts from "typescript"
+import { Annotation } from "doctrine"
 
 export interface Member {
   readonly name: string
@@ -10,6 +11,7 @@ export interface MethodDescriptor extends Member {
   readonly isProtected?: boolean
 
   readonly node: ts.SignatureDeclaration
+  readonly jsDoc: Annotation
 }
 
 export interface Property extends Member {
