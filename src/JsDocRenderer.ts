@@ -61,14 +61,16 @@ export class JsDocRenderer {
     }
 
     for (const parent of descriptor.parents) {
-      // ignore <> type params because JsDoc expects namepath, but not type expression 
+      // ignore <> type params because JsDoc expects namepath, but not type expression
       tags.push(`@extends ${renderType(parent, modulePathMapper, true)}`)
     }
 
     JsDocRenderer.renderProperties(descriptor.properties, tags, modulePathMapper)
-    
-    for (const example of examples) {
-      tags.push(`@example <caption>${example.name}</caption> @lang ${example.lang}\n * ${example.content.trim().split("\n").join("\n * ")}`)
+
+    if (examples != null) {
+      for (const example of examples) {
+        tags.push(`@example <caption>${example.name}</caption> @lang ${example.lang}\n * ${example.content.trim().split("\n").join("\n * ")}`)
+      }
     }
 
     let result = this.formatComment(descriptor.node, tags, parseExistingJsDoc(descriptor.node, tags) || "")
@@ -91,7 +93,7 @@ export class JsDocRenderer {
     const tags = method.tags.slice()
 
     const paramNameToInfo = new Map<string, Tag>()
-    let returns: Tag | null
+    let returns: Tag | null = null
 
     const parsed = method.jsDoc
     if (parsed != null) {
@@ -116,7 +118,7 @@ export class JsDocRenderer {
 
       const type = param.type
       if (type != null) {
-        text += ` ${renderTypes(this.generator.getTypeNamePathByNode(type), modulePathMapper)}`
+        text += ` ${renderTypes(this.generator.getTypeNamePathByNode(type)!!, modulePathMapper)}`
       }
 
       text += ` ${name}`
@@ -132,8 +134,8 @@ export class JsDocRenderer {
       tags.push(`@function ${classDescriptor.modulePath}.${classDescriptor.name}#${method.name}`)
     }
 
-    const signature = this.generator.program.getTypeChecker().getSignatureFromDeclaration(method.node)
-    const returnTypes = this.generator.getTypeNames(signature.getReturnType(), method.node)
+    const signature = this.generator.program.getTypeChecker().getSignatureFromDeclaration(method.node)!!
+    const returnTypes = this.generator.getTypeNames(signature.getReturnType(), method.node)!!
     // http://stackoverflow.com/questions/4759175/how-to-return-void-in-jsdoc
     if (!returnTypes.includes("void")) {
       let text = `@returns ${renderTypes(returnTypes, modulePathMapper)}`
@@ -180,19 +182,21 @@ export class JsDocRenderer {
     result += `export var ${descriptor.name}\n`
     return result
   }
-  
+
   renderMember(descriptor: Descriptor) {
     const tags = [
       "@enum {number}"
     ]
-    
+
     if (descriptor.readonly) {
-      tags.push("@readonly") 
+      tags.push("@readonly")
     }
-    for (const property of descriptor.properties) {
-      tags.push(`@property ${property.name}`) 
+    if (descriptor.properties != null) {
+      for (const property of descriptor.properties) {
+        tags.push(`@property ${property.name}`)
+      }
     }
-    
+
     let result = this.formatComment(descriptor.node!, tags)
     result += `export var ${descriptor.name}\n`
     return result
@@ -215,25 +219,25 @@ export class JsDocRenderer {
             case "default":
               defaultValue = tag.description
               break
-            
+
             case "private":
               continue loop
-            
+
             case "required":
               isOptional = false
               break
-            
+
             case "see":
               description += `\nSee: ${tag.description}`
               break
-            
+
             case "deprecated":
               description += `\nDeprecated: {tag.description}`
               break
-            
+
             default: {
               const sourceFile = node.getSourceFile()
-              const leadingCommentRanges = ts.getLeadingCommentRanges(sourceFile.text, node.pos)
+              const leadingCommentRanges = ts.getLeadingCommentRanges(sourceFile.text, node.pos)!!
               const position = sourceFile.getLineAndCharacterOfPosition(leadingCommentRanges[0].pos)
               console.warn(`${path.basename(sourceFile.fileName)} ${position.line + 1}:${position.character} property level tag "${tag.title}" are not supported, please file issue`)
             }

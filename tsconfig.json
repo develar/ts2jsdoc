@@ -1,18 +1,7 @@
 {
+  "extends": "./node_modules/ts-babel/tsconfig-base.json",
   "compilerOptions": {
-    "module": "es2015",
-    "target": "es2017",
-    "noImplicitAny": true,
-    "removeComments": true,
-    "outDir": "out",
-    "newLine": "LF",
-    "noEmitOnError": true,
-    "inlineSources": true,
-    "sourceMap": true,
-    "noImplicitReturns": true,
-    "noEmitHelpers": true,
-    "moduleResolution": "Node",
-    "noFallthroughCasesInSwitch": true
+    "outDir": "out"
   },
   "include": [
     "src/*.ts"

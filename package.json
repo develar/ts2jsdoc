@@ -1,7 +1,7 @@
 {
   "name": "ts-jsdoc",
   "description": "Transform TypeScript to JSDoc annotated JS code",
-  "version": "2.0.0",
+  "version": "2.0.4",
   "license": "MIT",
   "bin": {
     "ts2jsdoc": "out/ts2jsdoc.js"
@@ -18,26 +18,21 @@
   },
   "dependencies": {
     "bluebird-lst": "^1.0.2",
-    "chalk": "^1.1.3",
+    "chalk": "^2.0.1",
     "doctrine": "^2.0.0",
-    "fs-extra-p": "^4.3.0",
+    "fs-extra-p": "^4.4.0",
     "source-map-support": "^0.4.15"
   },
   "devDependencies": {
     "@types/doctrine": "^0.0.3",
-    "@types/node": "^7.0.31",
-    "babel-plugin-array-includes": "^2.0.3",
-    "babel-plugin-transform-async-to-module-method": "^6.24.1",
-    "babel-plugin-transform-es2015-destructuring": "^6.23.0",
-    "babel-plugin-transform-es2015-parameters": "^6.24.1",
-    "babel-plugin-transform-es2015-spread": "^6.22.0",
-    "babel-plugin-transform-inline-imports-commonjs": "^1.2.0",
+    "@types/node": "^8.0.19",
+    "babel-preset-ts-node4-bluebird": "^0.1.0",
     "jest": "^20.0.4",
     "jest-environment-node-debug": "^2.0.0",
-    "ts-babel": "^3.0.1"
+    "ts-babel": "^3.1.4"
   },
   "peerDependencies": {
-    "typescript": "^2.3.4"
+    "typescript": "^2.4.2"
   },
   "repository": {
     "type": "git",
@@ -62,5 +57,10 @@
       "[\\/]{1}fixtures[\\/]{1}"
     ],
     "testRegex": "\\.js$"
+  },
+  "babel": {
+    "presets": [
+      "babel-preset-ts-node4-bluebird"
+    ]
   }
 }

@@ -2,7 +2,7 @@
 
 import * as ts from "typescript"
 
-import { generateAndWrite } from "./JsDocGenerator"
+import { generateAndWrite } from "./manager"
 import { transpile } from "./util"
 import "source-map-support/register"
 

@@ -11,7 +11,7 @@ export interface MethodDescriptor extends Member {
   readonly isProtected?: boolean
 
   readonly node: ts.SignatureDeclaration
-  readonly jsDoc: Annotation
+  readonly jsDoc: Annotation | null
 }
 
 export interface Property extends Member {
@@ -53,7 +53,7 @@ export interface SourceFileModuleInfo {
 
 export interface Descriptor extends Member {
   node?: ts.Node
-  
+
   id?: string
   name: string
   longname?: string
@@ -62,9 +62,9 @@ export interface Descriptor extends Member {
   description?: string
   type: DescriptorType
   properties?: Array<Descriptor>
-  
+
   memberof?: string
-  
+
   readonly?: boolean
 }
 

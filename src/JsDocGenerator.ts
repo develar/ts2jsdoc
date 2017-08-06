@@ -1,10 +1,8 @@
 import * as ts from "typescript"
 import * as path from "path"
-import { emptyDir, readdir, readFile, readJson, writeFile } from "fs-extra-p"
 import { JsDocRenderer } from "./JsDocRenderer"
 import { checkErrors, processTree } from "./util"
-import { Class, Descriptor, Member, MethodDescriptor, Property, SourceFileDescriptor, SourceFileModuleInfo, Type, Variable } from "./psi"
-import BluebirdPromise from "bluebird-lst"
+import { Class, Descriptor, MethodDescriptor, Property, SourceFileDescriptor, SourceFileModuleInfo, Type, Variable } from "./psi"
 import { Annotation, parse as parseJsDoc } from "doctrine"
 
 export interface TsToJsdocOptions {
@@ -20,139 +18,7 @@ export interface TsToJsdocOptions {
 
 const vm = require("vm")
 
-export async function generateAndWrite(basePath: string, config: ts.ParsedCommandLine, tsConfig: any) {
-  let packageData: any = {name: "packageJsonNotDefined"}
-  try {
-    packageData = await readJson(path.join(basePath, "package.json"))
-  }
-  catch (e) {
-  }
-
-
-  const options: TsToJsdocOptions = typeof tsConfig.jsdoc === "string" ? {out: tsConfig.jsdoc} : tsConfig.jsdoc
-  if (options.out == null) {
-    throw new Error("Please specify out in the tsConfig.jsdoc (https://github.com/develar/ts2jsdoc#generate-jsdoc-from-typescript)")
-  }
-
-  const generator = generate(basePath, config, packageData.name, packageData == null ? null : packageData.main, options)
-
-  const out = path.resolve(basePath, options.out)
-  console.log(`Generating JSDoc to ${out}`)
-  await emptyDir(out)
-
-  const moduleNameToResult = generator.moduleNameToResult
-  const mainModuleName = generator.moduleName
-  const mainPsi = generator.moduleNameToResult.get(mainModuleName)
-  
-  const oldModulePathToNew = new Map<string, string>()
-  for (const [id, names] of generator.mainMappings) {
-    const psi = moduleNameToResult.get(id)
-    for (const name of names) {
-      if (moveMember(psi.classes, mainPsi.classes, name, mainModuleName)) {
-        oldModulePathToNew.set(`module:${id}.${name}`, `module:${mainModuleName}.${name}`)
-        continue
-      }
-      
-      moveMember(psi.functions, mainPsi.functions, name) || moveMember(psi.members, mainPsi.members, name)
-    }
-  }
-  
-  const exampleDir = options.examples == null ? null : path.resolve(basePath, options.examples)
-  const existingClassExampleDirs = exampleDir == null ? null : new Set((await readdir(exampleDir)).filter(it => it[0] != "." && !it.includes(".")))
-  
-  for (const [moduleId, psi] of moduleNameToResult.entries()) {
-    const modulePathMapper: ModulePathMapper = oldPath => {
-      if (!oldPath.startsWith("module:")) {
-        return oldPath
-      }
-      
-      let result = oldModulePathToNew.get(oldPath)
-      if (result != null) {
-        return result
-      }
-      
-      if (moduleId === mainModuleName && options.externalIfNotMain != null) {
-        // external:electron-builder/out/platformPackager.PlatformPackager is not rendered by jsdoc2md,
-        // only PlatformPackager
-        const dotIndex = oldPath.lastIndexOf(".")
-        const value = oldPath.substring(dotIndex + 1)
-        externalToModuleName.set(value, oldPath.substring(oldPath.indexOf(":") + 1, dotIndex))
-        return `external:${value}`
-      }
-      
-      return oldPath
-    }
-    
-    let result = ""
-    const externalToModuleName = new Map<string, string>()
-    for (const d of copyAndSort(psi.members)) {
-      if ((<any>d).kind == null) {
-        result += generator.renderer.renderVariable(<Variable>d, modulePathMapper)
-      }
-      else {
-        result += generator.renderer.renderMember(<Descriptor>d)
-      }
-    }
-    
-    for (const d of copyAndSort(psi.classes)) {
-      let examples: Array<Example> = []
-      if (existingClassExampleDirs != null && existingClassExampleDirs.has(d.name)) {
-        const dir = path.join(exampleDir, d.name)
-        examples = await BluebirdPromise.map((await readdir(dir)).filter(it => it[0] != "." && it.includes(".")), async it => {
-          const ext = path.extname(it)
-          return <Example>{
-            name: path.basename(it, ext),
-            content: await readFile(path.join(dir, it), "utf8"),
-            lang: ext
-          }
-        })
-      }
-      
-      result += generator.renderer.renderClassOrInterface(d, modulePathMapper, examples)
-    }
-    
-    for (const d of copyAndSort(psi.functions)) {
-      result += generator.renderer.renderMethod(d, modulePathMapper, null)
-    }
-    
-    if (result === "") {
-      continue
-    }
-    
-    let externalJsDoc = ""
-    for (const [external, moduleId] of externalToModuleName) {
-      externalJsDoc += `/**\n* @external ${external}\n* @see ${options.externalIfNotMain}#module_${moduleId}.${external}\n*/\n`
-    }
-
-    await writeFile(path.join(out, moduleId.replace(/\//g, "-") + ".js"), `${externalJsDoc}/** 
- * @module ${moduleId}
- */
-
-${result}`)
-  }
-}
-
 export type ModulePathMapper = (oldPath: string) => string
-
-function moveMember<T extends Member>(members: Array<T>, mainPsiMembers: Array<T>, name: string, newId: string | null = null): boolean {
-  const index = members.findIndex(it => it.name === name)
-  if (index < 0) {
-    return false
-  }
-  
-  const member = members[index]
-  if (newId != null) {
-    (<any>member).modulePath = "module:" + newId
-  }
-
-  mainPsiMembers.push(member)
-  members.splice(index, 1)
-  return true
-}
-
-function copyAndSort<T extends Member>(members: Array<T>): Array<T> {
-  return members.slice().sort((a, b) => a.name.localeCompare(b.name))
-}
 
 export function generate(basePath: string, config: ts.ParsedCommandLine, moduleName: string, main: string | null, options: TsToJsdocOptions): JsDocGenerator {
   const compilerOptions = config.options
@@ -165,7 +31,7 @@ export function generate(basePath: string, config: ts.ParsedCommandLine, moduleN
     throw new Error("outDir is not specified in the compilerOptions")
   }
 
-  const generator = new JsDocGenerator(program, path.relative(basePath, compilerOptions.outDir), moduleName, main, (<any>program).getCommonSourceDirectory(), options)
+  const generator = new JsDocGenerator(program, path.relative(basePath, compilerOutDir), moduleName, main, (<any>program).getCommonSourceDirectory(), options)
   for (const sourceFile of program.getSourceFiles()) {
     if (!sourceFile.isDeclarationFile) {
       generator.generate(sourceFile)
@@ -180,10 +46,10 @@ export class JsDocGenerator {
 
   private currentSourceModuleId: string
   readonly renderer = new JsDocRenderer(this)
-  
-  readonly mainMappings = new Map<string, Array<string>>() 
 
-  constructor(readonly program: ts.Program, readonly relativeOutDir: string, readonly moduleName: string, private readonly mainFile: string, private readonly commonSourceDirectory: string, private readonly options: TsToJsdocOptions) {
+  readonly mainMappings = new Map<string, Array<string>>()
+
+  constructor(readonly program: ts.Program, readonly relativeOutDir: string, readonly moduleName: string | null, private readonly mainFile: string | null, private readonly commonSourceDirectory: string, private readonly options: TsToJsdocOptions) {
   }
 
   private sourceFileToModuleId(sourceFile: ts.SourceFile): SourceFileModuleInfo {
@@ -212,7 +78,7 @@ export class JsDocGenerator {
 
     const isMain = this.mainFile == null ? fileNameWithoutExt.endsWith("/main") : `${fileNameWithoutExt}.js`.includes(path.posix.relative(this.relativeOutDir, this.mainFile))
     if (isMain) {
-      sourceModuleId = this.moduleName
+      sourceModuleId = this.moduleName!!
     }
     return {id: sourceModuleId, fileNameWithoutExt, isMain}
   }
@@ -275,39 +141,39 @@ export class JsDocGenerator {
       existingPsi.members.push(...members)
     }
   }
-  
+
   private handleExportFromMain(node: ts.ExportDeclaration) {
     const moduleSpecifier = node.moduleSpecifier
     const exportClause = node.exportClause
     if (exportClause == null || moduleSpecifier == null) {
       return
     }
-    
+
     if (moduleSpecifier.kind !== ts.SyntaxKind.StringLiteral) {
       return
     }
-    
+
     const filePath = (<ts.StringLiteral>moduleSpecifier).text
     if (!filePath.startsWith(".")) {
       return
     }
-    
+
     const fullFilename = path.posix.resolve(path.posix.dirname(node.getSourceFile().fileName), filePath) + ".ts"
     const sourceFile = this.program.getSourceFile(fullFilename)
     if (sourceFile == null) {
       return
     }
-    
+
     const names: Array<string> = []
     for (const e of exportClause.elements) {
       if (e.kind === ts.SyntaxKind.ExportSpecifier) {
-        names.push((<ts.Identifier>(<ts.ExportSpecifier>e).name).text) 
+        names.push((<ts.Identifier>(<ts.ExportSpecifier>e).name).text)
       }
       else {
         console.error(`Unsupported export element: ${e.getText(e.getSourceFile())}`)
       }
     }
-    
+
     this.mainMappings.set(this.sourceFileToModuleId(sourceFile).id, names)
   }
 
@@ -349,11 +215,20 @@ export class JsDocGenerator {
   private typesToList(types: Array<ts.Type>, node: ts.Node) {
     const typeNames: Array<string | Type> = []
     for (const type of types) {
-      const name = (<any>type).kind == null ? [this.getTypeNamePath(<any>type)] : this.getTypeNamePathByNode(<any>type)
-      if (name == null) {
-        throw new Error(`cannot get name for ${node.getText(node.getSourceFile())}`)
+      if ((<any>type).kind == null) {
+        const name = this.getTypeNamePath(<any>type)
+        if (name == null) {
+          throw new Error(`Cannot get name for ${node.getText(node.getSourceFile())}`)
+        }
+        typeNames.push(name)
       }
-      typeNames.push(...name)
+      else {
+        const name = this.getTypeNamePathByNode(<any>type)
+        if (name == null) {
+          throw new Error(`Cannot get name for ${node.getText(node.getSourceFile())}`)
+        }
+        typeNames.push(...name)
+      }
     }
     return typeNames
   }
@@ -372,7 +247,7 @@ export class JsDocGenerator {
     if (typeArguments != null) {
       const subTypes = []
       for (const type of typeArguments) {
-        subTypes.push(...this.getTypeNames(type, node))
+        subTypes.push(...this.getTypeNames(type, node)!!)
       }
       return [{name: result, subTypes: subTypes}]
     }
@@ -410,13 +285,13 @@ export class JsDocGenerator {
       return null
     }
 
-    const valueDeclaration = symbol.valueDeclaration || ((symbol.declarations == null || symbol.declarations.length === 0) ? null : symbol.declarations[0])
+    const valueDeclaration = (symbol.valueDeclaration || ((symbol.declarations == null || symbol.declarations.length === 0) ? null : symbol.declarations[0]))!!
     if (ts.getCombinedModifierFlags(valueDeclaration) & ts.ModifierFlags.Ambient) {
       // Error from lib.es5.d.ts
       return symbol.name
     }
 
-    let typeSourceParent: ts.Node = valueDeclaration
+    let typeSourceParent: ts.Node | null | undefined = valueDeclaration
     while (typeSourceParent != null) {
       if (typeSourceParent.kind === ts.SyntaxKind.ModuleDeclaration && (typeSourceParent.flags & ts.NodeFlags.NestedNamespace) <= 0) {
         const m = <ts.ModuleDeclaration>typeSourceParent
@@ -439,21 +314,21 @@ export class JsDocGenerator {
     console.warn(`Cannot find parent for ${symbol}`)
     return null
   }
-  
-  private describeEnum(node: ts.EnumDeclaration): Descriptor {
+
+  private describeEnum(node: ts.EnumDeclaration): Descriptor | null {
     const flags = ts.getCombinedModifierFlags(node)
     if (!(flags & ts.ModifierFlags.Export)) {
       return null
     }
-    
+
     const type = {
       names: ["number"]
     }
-    
+
     const name = (<ts.Identifier>node.name).text
     const moduleId = this.computeTypePath()
     const id = `${moduleId}.${name}`
-    
+
     const properties: Array<Descriptor> = []
     for (const member of node.members) {
       const name = (<ts.Identifier>member.name).text
@@ -481,14 +356,14 @@ export class JsDocGenerator {
     }
   }
 
-  private describeVariable(node: ts.VariableStatement): Variable {
+  private describeVariable(node: ts.VariableStatement): Variable | null {
     const flags = ts.getCombinedModifierFlags(node)
     if (!(flags & ts.ModifierFlags.Export)) {
       return null
     }
 
     const declarations = node.declarationList == null ? null : node.declarationList.declarations
-    if (declarations == null && declarations.length !== 1) {
+    if (declarations == null || declarations.length !== 1) {
       return null
     }
 
@@ -497,13 +372,19 @@ export class JsDocGenerator {
       return null
     }
 
+    const existingJsDoc = JsDocRenderer.getComment(node)
+    const jsDoc = existingJsDoc == null ? null : parseJsDoc(existingJsDoc, {unwrap: true})
+    if (this.isHidden(jsDoc)) {
+      return null
+    }
+
     let types
     const type = this.program.getTypeChecker().getTypeAtLocation(declaration)
     if (type.symbol != null && type.symbol.valueDeclaration != null) {
-      types = [this.getTypeNamePath(type)]
+      types = [this.getTypeNamePath(type)!!]
     }
     else {
-      types = this.getTypeNamePathByNode(declaration.type)
+      types = this.getTypeNamePathByNode(declaration.type)!!
     }
 
     // NodeFlags.Const on VariableDeclarationList, not on VariableDeclaration
@@ -519,7 +400,7 @@ export class JsDocGenerator {
 
     const existingJsDoc = JsDocRenderer.getComment(node)
     const jsDoc = existingJsDoc == null ? null : parseJsDoc(existingJsDoc, {unwrap: true})
-    return this.isHidden(jsDoc) ? null : {name: (<ts.Identifier>node.name).text, node: node, tags: [], jsDoc }
+    return this.isHidden(jsDoc) ? null : {name: (node.name as ts.Identifier).text, node: node, tags: [], jsDoc }
   }
 
   private isHidden(jsDoc: Annotation | null): boolean {
@@ -542,6 +423,13 @@ export class JsDocGenerator {
     }
 
     const nodeDeclaration = <ts.InterfaceDeclaration>node
+
+    const existingJsDoc = JsDocRenderer.getComment(node)
+    const jsDoc = existingJsDoc == null ? null : parseJsDoc(existingJsDoc, {unwrap: true})
+    if (this.isHidden(jsDoc)) {
+      return null
+    }
+
     const className = (<ts.Identifier>nodeDeclaration.name).text
 
     const clazz = <ts.ClassDeclaration>node
@@ -552,7 +440,7 @@ export class JsDocGenerator {
           for (const type of heritageClause.types) {
             const typeNamePath = this.getTypeNamePathByNode(type)
             if (typeNamePath != null) {
-              parents = typeNamePath
+              parents = parents.concat(typeNamePath)
             }
           }
         }
@@ -615,14 +503,17 @@ export class JsDocGenerator {
     }
 
     const name = (<ts.Identifier>node.name).text
-    
-    let types
+
+    let types: Array<string | Type>
     if (node.type == null) {
       const type = this.program.getTypeChecker().getTypeAtLocation(node)
-      types = type == null ? null : this.getTypeNames(type, node)
+      if (type == null) {
+        return null
+      }
+      types = this.getTypeNames(type, node)!!
     }
     else {
-      types = this.getTypeNamePathByNode(node.type)
+      types = this.getTypeNamePathByNode(node.type)!!
     }
 
     let isOptional = node.questionToken != null
@@ -652,11 +543,11 @@ export class JsDocGenerator {
       }
     }
 
-    isOptional = isOptional || defaultValue != null || types.includes("null")
+    isOptional = isOptional || defaultValue != null || types!.includes("null")
     if (!isOptional && isParentClass && (flags & ts.ModifierFlags.Readonly) > 0) {
       isOptional = true
     }
-    return {name, types, node, isOptional: isOptional, defaultValue}
+    return {name, types, node, isOptional, defaultValue}
   }
 
   private renderMethod(node: ts.SignatureDeclaration): MethodDescriptor | null {
