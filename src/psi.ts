@@ -47,7 +47,6 @@ export class SourceFileDescriptor {
 
 export interface SourceFileModuleInfo {
   readonly id: string
-  readonly fileNameWithoutExt: string
   readonly isMain: boolean
 }
 

@@ -31,7 +31,7 @@ export function generate(basePath: string, config: ts.ParsedCommandLine, moduleN
     throw new Error("outDir is not specified in the compilerOptions")
   }
 
-  const generator = new JsDocGenerator(program, path.relative(basePath, compilerOutDir), moduleName, main, (<any>program).getCommonSourceDirectory(), options)
+  const generator = new JsDocGenerator(program, path.relative(basePath, compilerOutDir), moduleName, main, (<any>program).getCommonSourceDirectory(), options, compilerOptions.baseUrl)
   for (const sourceFile of program.getSourceFiles()) {
     if (!sourceFile.isDeclarationFile) {
       generator.generate(sourceFile)
@@ -41,7 +41,6 @@ export function generate(basePath: string, config: ts.ParsedCommandLine, moduleN
 }
 
 export class JsDocGenerator {
-  private readonly fileNameToModuleId: any = {}
   readonly moduleNameToResult = new Map<string, SourceFileDescriptor>()
 
   private currentSourceModuleId: string
@@ -49,14 +48,20 @@ export class JsDocGenerator {
 
   readonly mainMappings = new Map<string, Array<string>>()
 
-  constructor(readonly program: ts.Program, readonly relativeOutDir: string, readonly moduleName: string | null, private readonly mainFile: string | null, private readonly commonSourceDirectory: string, private readonly options: TsToJsdocOptions) {
+  constructor(readonly program: ts.Program, readonly relativeOutDir: string, readonly moduleName: string | null, private readonly mainFile: string | null, private readonly commonSourceDirectory: string, private readonly options: TsToJsdocOptions, private readonly baseUrl?: string) {
   }
 
   private sourceFileToModuleId(sourceFile: ts.SourceFile): SourceFileModuleInfo {
     if (sourceFile.isDeclarationFile) {
       if (sourceFile.fileName.endsWith("node.d.ts")) {
-        return {id: "node", fileNameWithoutExt: "", isMain: false}
+        return {id: "node", isMain: false}
       }
+
+      let fileNameWithoutExt = sourceFile.fileName.slice(0, sourceFile.fileName.length - ".d.ts".length).replace(/\\/g, "/")
+      if (this.baseUrl != null && fileNameWithoutExt.startsWith(this.baseUrl)) {
+        fileNameWithoutExt = fileNameWithoutExt.substring(this.baseUrl.length + 1)
+      }
+      return {id: fileNameWithoutExt, isMain: false}
     }
 
     let sourceModuleId: string
@@ -80,7 +85,7 @@ export class JsDocGenerator {
     if (isMain) {
       sourceModuleId = this.moduleName!!
     }
-    return {id: sourceModuleId, fileNameWithoutExt, isMain}
+    return {id: sourceModuleId, isMain}
   }
 
   generate(sourceFile: ts.SourceFile): void {
@@ -90,7 +95,6 @@ export class JsDocGenerator {
 
     const moduleId = this.sourceFileToModuleId(sourceFile)
     this.currentSourceModuleId = moduleId.id
-    this.fileNameToModuleId[path.resolve(moduleId.fileNameWithoutExt).replace(/\\/g, "/")] = moduleId.id
 
     const classes: Array<Class> = []
     const functions: Array<MethodDescriptor> = []
@@ -374,7 +378,7 @@ export class JsDocGenerator {
 
     const existingJsDoc = JsDocRenderer.getComment(node)
     const jsDoc = existingJsDoc == null ? null : parseJsDoc(existingJsDoc, {unwrap: true})
-    if (this.isHidden(jsDoc)) {
+    if (JsDocGenerator.isHidden(jsDoc)) {
       return null
     }
 
@@ -400,10 +404,10 @@ export class JsDocGenerator {
 
     const existingJsDoc = JsDocRenderer.getComment(node)
     const jsDoc = existingJsDoc == null ? null : parseJsDoc(existingJsDoc, {unwrap: true})
-    return this.isHidden(jsDoc) ? null : {name: (node.name as ts.Identifier).text, node: node, tags: [], jsDoc }
+    return JsDocGenerator.isHidden(jsDoc) ? null : {name: (node.name as ts.Identifier).text, node: node, tags: [], jsDoc }
   }
 
-  private isHidden(jsDoc: Annotation | null): boolean {
+  private static isHidden(jsDoc: Annotation | null): boolean {
     if (jsDoc == null) {
       return false
     }
@@ -426,7 +430,7 @@ export class JsDocGenerator {
 
     const existingJsDoc = JsDocRenderer.getComment(node)
     const jsDoc = existingJsDoc == null ? null : parseJsDoc(existingJsDoc, {unwrap: true})
-    if (this.isHidden(jsDoc)) {
+    if (JsDocGenerator.isHidden(jsDoc)) {
       return null
     }
 
@@ -525,10 +529,10 @@ export class JsDocGenerator {
       }
       else {
         try {
-          const sandbox = {sandboxvar: null as any}
-          vm.runInNewContext(`sandboxvar=${initializer.getText()}`, sandbox)
+          const sandbox = {sandboxVar: null as any}
+          vm.runInNewContext(`sandboxVar=${initializer.getText()}`, sandbox)
 
-          const val = sandbox.sandboxvar
+          const val = sandbox.sandboxVar
           if (val === null || typeof val === "string" || typeof val === "number" || "boolean" || Object.prototype.toString.call(val) === "[object Array]") {
             defaultValue = val
           }
@@ -570,11 +574,11 @@ export class JsDocGenerator {
     const name = (<ts.Identifier>node.name).text
     const existingJsDoc = JsDocRenderer.getComment(node)
     const jsDoc = existingJsDoc == null ? null : parseJsDoc(existingJsDoc, {unwrap: true})
-    return this.isHidden(jsDoc) ? null : {name, tags, isProtected, node, jsDoc}
+    return JsDocGenerator.isHidden(jsDoc) ? null : {name, tags, isProtected, node, jsDoc}
   }
 
   private computeTypePath(): string {
-    return "module:" + this.currentSourceModuleId
+    return `module:${this.currentSourceModuleId}`
   }
 }
 

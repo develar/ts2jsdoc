@@ -1,7 +1,7 @@
 {
   "name": "ts-jsdoc",
   "description": "Transform TypeScript to JSDoc annotated JS code",
-  "version": "2.0.4",
+  "version": "2.0.5",
   "license": "MIT",
   "bin": {
     "ts2jsdoc": "out/ts2jsdoc.js"
@@ -17,19 +17,19 @@
     "test": "yarn run compile && jest"
   },
   "dependencies": {
-    "bluebird-lst": "^1.0.2",
-    "chalk": "^2.0.1",
+    "bluebird-lst": "^1.0.3",
+    "chalk": "^2.1.0",
     "doctrine": "^2.0.0",
     "fs-extra-p": "^4.4.0",
     "source-map-support": "^0.4.15"
   },
   "devDependencies": {
     "@types/doctrine": "^0.0.3",
-    "@types/node": "^8.0.19",
+    "@types/node": "^8.0.20",
     "babel-preset-ts-node4-bluebird": "^0.1.0",
     "jest": "^20.0.4",
     "jest-environment-node-debug": "^2.0.0",
-    "ts-babel": "^3.1.4"
+    "ts-babel": "^3.2.1"
   },
   "peerDependencies": {
     "typescript": "^2.4.2"
