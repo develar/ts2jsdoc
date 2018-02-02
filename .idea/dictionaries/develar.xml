@@ -2,6 +2,8 @@
   <dictionary name="develar">
     <words>
       <w>memberof</w>
+      <w>transpilator</w>
+      <w>transpile</w>
     </words>
   </dictionary>
 </component>

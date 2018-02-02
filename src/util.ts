@@ -62,29 +62,13 @@ class CompilationError extends Error {
 }
 
 export function processTree(sourceFile: ts.SourceFile, replacer: (node: ts.Node) => boolean): void {
-  let cursorPosition = 0;
-
-  function skip(node: ts.Node) {
-    cursorPosition = node.end;
-  }
-
-  function readThrough(node: ts.Node) {
-    cursorPosition = node.pos;
-  }
-
   function visit(node: ts.Node) {
-    readThrough(node)
-
     if (node.flags & ts.ModifierFlags.Private) {
       // skip private nodes
-      skip(node)
       return
     }
 
-    if (replacer(node)) {
-      skip(node)
-    }
-    else {
+    if (!replacer(node)) {
       ts.forEachChild(node, visit)
     }
   }

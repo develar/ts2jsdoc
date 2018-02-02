@@ -39,7 +39,7 @@ export interface Variable extends Member {
   readonly types: Array<string | Type>
 }
 
-export class SourceFileDescriptor {
+export interface SourceFileDescriptor {
   readonly classes: Array<Class>
   readonly functions: Array<MethodDescriptor>
   readonly members: Array<Variable | Descriptor>
@@ -55,6 +55,7 @@ export interface Descriptor extends Member {
 
   id?: string
   name: string
+  // noinspection SpellCheckingInspection
   longname?: string
   kind: "enum" | "member"
   scope: "global" | "static"

@@ -43,7 +43,7 @@ export function generate(basePath: string, config: ts.ParsedCommandLine, moduleN
 export class JsDocGenerator {
   readonly moduleNameToResult = new Map<string, SourceFileDescriptor>()
 
-  private currentSourceModuleId: string
+  private currentSourceModuleId: string = ""
   readonly renderer = new JsDocRenderer(this)
 
   readonly mainMappings = new Map<string, Array<string>>()
@@ -347,6 +347,7 @@ export class JsDocGenerator {
 
     // we don't set readonly because it is clear that enum is not mutable
     // e.g. jsdoc2md wil add useless "Read only: true"
+    // noinspection SpellCheckingInspection
     return {
       node: node,
       id: id,

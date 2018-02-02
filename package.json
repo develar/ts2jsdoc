@@ -1,7 +1,7 @@
 {
   "name": "ts-jsdoc",
   "description": "Transform TypeScript to JSDoc annotated JS code",
-  "version": "2.0.5",
+  "version": "3.0.0",
   "license": "MIT",
   "bin": {
     "ts2jsdoc": "out/ts2jsdoc.js"
@@ -12,34 +12,33 @@
     "*.js"
   ],
   "scripts": {
-    "compile": "ts-babel .",
-    "release": "ts-babel . && npm publish",
+    "compile": "tsc -p .",
+    "release": "yarn compile && . && npm publish",
     "test": "yarn run compile && jest"
   },
   "dependencies": {
-    "bluebird-lst": "^1.0.3",
-    "chalk": "^2.1.0",
-    "doctrine": "^2.0.0",
-    "fs-extra-p": "^4.4.0",
-    "source-map-support": "^0.4.15"
+    "bluebird-lst": "^1.0.5",
+    "chalk": "^2.3.0",
+    "doctrine": "^2.1.0",
+    "fs-extra-p": "^4.5.0",
+    "source-map-support": "^0.5.3"
   },
   "devDependencies": {
     "@types/doctrine": "^0.0.3",
-    "@types/node": "^8.0.20",
-    "babel-preset-ts-node4-bluebird": "^0.1.0",
-    "jest": "^20.0.4",
+    "@types/node": "^9.4.0",
+    "jest": "^22.1.4",
     "jest-environment-node-debug": "^2.0.0",
-    "ts-babel": "^3.2.1"
+    "typescript": "^2.7.1"
   },
   "peerDependencies": {
-    "typescript": "^2.4.2"
+    "typescript": "^2.6.0"
   },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/develar/ts2jsdoc.git"
   },
   "engines": {
-    "node": ">=4.0.0"
+    "node": ">=8.9.0"
   },
   "keywords": [
     "typescript",
@@ -57,10 +56,5 @@
       "[\\/]{1}fixtures[\\/]{1}"
     ],
     "testRegex": "\\.js$"
-  },
-  "babel": {
-    "presets": [
-      "babel-preset-ts-node4-bluebird"
-    ]
   }
 }
