@@ -1,6 +1,6 @@
 import * as ts from "typescript"
 import * as path from "path"
-import { emptyDir, readdir, readFile, readJson, writeFile } from "fs-extra-p"
+import { emptyDir, readdir, readFile, readJson, writeFile } from "fs-extra"
 import { Descriptor, Member, Variable } from "./psi"
 import BluebirdPromise from "bluebird-lst"
 import { Example, generate, JsDocGenerator, ModulePathMapper, TsToJsdocOptions } from "./JsDocGenerator"

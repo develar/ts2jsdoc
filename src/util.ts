@@ -1,8 +1,9 @@
 import * as ts from "typescript"
 import * as path from "path"
-import { readFile } from "fs-extra-p"
+import { readFile } from "fs-extra"
+import BluebirdPromise from "bluebird-lst"
 
-export async function transpile(transpilator: (basePath: string, config: ts.ParsedCommandLine, tsConfig: any) => Promise<any>) {
+export function transpile(transpilator: (basePath: string, config: ts.ParsedCommandLine, tsConfig: any) => Promise<any>) {
   const paths = process.argv.slice(2)
   if (paths.length == 0) {
     paths.push(process.cwd())
@@ -10,30 +11,32 @@ export async function transpile(transpilator: (basePath: string, config: ts.Pars
   return transpilePaths(paths, transpilator)
 }
 
-export async function transpilePaths(paths: Array<string>, transpilator: (basePath: string, config: ts.ParsedCommandLine, tsConfig: any) => Promise<any>) {
-  for (const basePath of paths) {
-    try {
-      await build(basePath, transpilator)
-    }
-    catch (e) {
-      if (!(e instanceof CompilationError)) {
-        throw e
-      }
-
-      for (const diagnostic of e.errors) {
-        if (diagnostic.file == null) {
-          console.log(diagnostic.messageText)
-          continue
+export function transpilePaths(paths: Array<string>, transpilator: (basePath: string, config: ts.ParsedCommandLine, tsConfig: any) => Promise<any>) {
+  return BluebirdPromise.map(paths, basePath => {
+    return build(basePath, transpilator)
+      .catch(e => {
+        if (e == null) {
+          return
         }
 
-        const location = diagnostic.file.getLineAndCharacterOfPosition(diagnostic.start!!)
-        const message = ts.flattenDiagnosticMessageText(diagnostic.messageText, '\n')
-        console.log(`${diagnostic.file.fileName} (${location.line + 1}, ${location.character + 1}): ${message}`)
-      }
-      process.exit(-1)
-      return
-    }
-  }
+        if (!(e instanceof CompilationError)) {
+          throw e
+        }
+
+        for (const diagnostic of e.errors) {
+          if (diagnostic.file == null) {
+            console.log(diagnostic.messageText)
+            continue
+          }
+
+          const location = diagnostic.file.getLineAndCharacterOfPosition(diagnostic.start!!)
+          const message = ts.flattenDiagnosticMessageText(diagnostic.messageText, "\n")
+          console.log(`${diagnostic.file.fileName} (${location.line + 1}, ${location.character + 1}): ${message}`)
+        }
+        process.exit(-1)
+        return
+      })
+  })
 }
 
 async function build(basePath: string, transpilator: (basePath: string, config: ts.ParsedCommandLine, tsConfig: any) => Promise<any>) {
@@ -49,14 +52,14 @@ async function build(basePath: string, transpilator: (basePath: string, config: 
   await transpilator(basePath, result, jsonResult.config)
 }
 
-export function checkErrors(errors: Array<ts.Diagnostic>): void {
+export function checkErrors(errors: ReadonlyArray<ts.Diagnostic>): void {
   if (errors.length !== 0) {
     throw new CompilationError(errors)
   }
 }
 
 class CompilationError extends Error {
-  constructor(public errors: Array<ts.Diagnostic>) {
+  constructor(public errors: ReadonlyArray<ts.Diagnostic>) {
     super("Compilation error")
   }
 }

@@ -118,7 +118,13 @@ export class JsDocRenderer {
 
       const type = param.type
       if (type != null) {
-        text += ` ${renderTypes(this.generator.getTypeNamePathByNode(type)!!, modulePathMapper)}`
+        let namePathByNode = this.generator.getTypeNamePathByNode(type)
+        if (namePathByNode == null) {
+          console.warn("cannot get namePathByNode for " + type)
+        }
+        else {
+          text += ` ${renderTypes(namePathByNode!!, modulePathMapper)}`
+        }
       }
 
       text += ` ${name}`

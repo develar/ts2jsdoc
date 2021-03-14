@@ -31,7 +31,7 @@ export function generate(basePath: string, config: ts.ParsedCommandLine, moduleN
     throw new Error("outDir is not specified in the compilerOptions")
   }
 
-  const generator = new JsDocGenerator(program, path.relative(basePath, compilerOutDir), moduleName, main, (<any>program).getCommonSourceDirectory(), options, compilerOptions.baseUrl)
+  const generator = new JsDocGenerator(program, path.relative(basePath, compilerOutDir), moduleName, main, (<any>program).getCommonSourceDirectory(), options, path.resolve(compilerOptions.baseUrl!!))
   for (const sourceFile of program.getSourceFiles()) {
     if (!sourceFile.isDeclarationFile) {
       generator.generate(sourceFile)
@@ -48,7 +48,13 @@ export class JsDocGenerator {
 
   readonly mainMappings = new Map<string, Array<string>>()
 
-  constructor(readonly program: ts.Program, readonly relativeOutDir: string, readonly moduleName: string | null, private readonly mainFile: string | null, private readonly commonSourceDirectory: string, private readonly options: TsToJsdocOptions, private readonly baseUrl?: string) {
+  constructor(readonly program: ts.Program,
+              readonly relativeOutDir: string,
+              readonly moduleName: string | null,
+              private readonly mainFile: string | null,
+              private readonly commonSourceDirectory: string,
+              private readonly options: TsToJsdocOptions,
+              private readonly baseUrl?: string) {
   }
 
   private sourceFileToModuleId(sourceFile: ts.SourceFile): SourceFileModuleInfo {
@@ -169,7 +175,7 @@ export class JsDocGenerator {
     }
 
     const names: Array<string> = []
-    for (const e of exportClause.elements) {
+    for (const e of (exportClause as any).elements) {
       if (e.kind === ts.SyntaxKind.ExportSpecifier) {
         names.push((<ts.Identifier>(<ts.ExportSpecifier>e).name).text)
       }
@@ -244,14 +250,17 @@ export class JsDocGenerator {
 
     let result = this.getTypeNamePath(type)
     if (result == null) {
-      throw new Error("Cannot infer getTypeNamePath")
+      return null
     }
 
     const typeArguments = (<ts.TypeReference>type).typeArguments
     if (typeArguments != null) {
       const subTypes = []
       for (const type of typeArguments) {
-        subTypes.push(...this.getTypeNames(type, node)!!)
+        const typeNames = this.getTypeNames(type, node)
+        if (typeNames != null) {
+          subTypes.push(...typeNames)
+        }
       }
       return [{name: result, subTypes: subTypes}]
     }
@@ -362,13 +371,13 @@ export class JsDocGenerator {
   }
 
   private describeVariable(node: ts.VariableStatement): Variable | null {
-    const flags = ts.getCombinedModifierFlags(node)
-    if (!(flags & ts.ModifierFlags.Export)) {
+    const declarations = node.declarationList == null ? null : node.declarationList.declarations
+    if (declarations == null || declarations.length !== 1) {
       return null
     }
 
-    const declarations = node.declarationList == null ? null : node.declarationList.declarations
-    if (declarations == null || declarations.length !== 1) {
+    const flags = ts.getCombinedModifierFlags(declarations[0])
+    if (!(flags & ts.ModifierFlags.Export)) {
       return null
     }
 
@@ -422,7 +431,7 @@ export class JsDocGenerator {
   }
 
   private processClassOrInterface(node: ts.Node): Class | null {
-    const flags = ts.getCombinedModifierFlags(node)
+    const flags = ts.getCombinedModifierFlags(node as ts.Declaration)
     if (!(flags & ts.ModifierFlags.Export)) {
       return null
     }
@@ -525,13 +534,14 @@ export class JsDocGenerator {
     let defaultValue = null
     const initializer = node.initializer
     if (initializer != null) {
-      if ((<any>initializer).expression != null || (<ts.Node>initializer).kind === ts.SyntaxKind.NoSubstitutionTemplateLiteral) {
-        defaultValue = initializer.getText()
+      const initializerText = initializer.getText()
+      if ((<any>initializer).expression != null || (<ts.Node>initializer).kind === ts.SyntaxKind.NoSubstitutionTemplateLiteral || initializerText.includes("process.stdout")) {
+        defaultValue = initializerText
       }
       else {
         try {
           const sandbox = {sandboxVar: null as any}
-          vm.runInNewContext(`sandboxVar=${initializer.getText()}`, sandbox)
+          vm.runInNewContext(`sandboxVar=${initializerText}`, sandbox)
 
           const val = sandbox.sandboxVar
           if (val === null || typeof val === "string" || typeof val === "number" || "boolean" || Object.prototype.toString.call(val) === "[object Array]") {
@@ -542,8 +552,8 @@ export class JsDocGenerator {
           }
         }
         catch (e) {
-          console.info(`exception evaluating initializer for property ${name}`)
-          defaultValue = initializer.getText()
+          console.info(`exception evaluating "${initializerText}" for property ${name}`)
+          defaultValue = initializerText
         }
       }
     }
